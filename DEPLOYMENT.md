@@ -110,8 +110,31 @@ Excel's evaluator caps **VBA → XLL** string arguments at 32,767 chars.
 
 ## 5. Troubleshooting
 
-- `?Application.Run("EB_Version")` in the Immediate window → `2.0.0` means the
-  XLL is loaded.
+**First stop:** run `modBridge.BridgeSelfTest "https://your-endpoint"` in the
+Immediate window — it checks load state, version, attach, and both HTTP paths
+with readable output.
+
+**Error 424 "Object required" (or 1004) on `Application.Run("EB_*", ...)`**
+means the name didn't resolve to a registered function: the XLL is **not
+loaded in this Excel instance**. Causes, in rough order of likelihood:
+
+1. Nothing loaded it yet — calling `EB_*` directly via `Run` bypasses
+   `EnsureAddin`. Go through `modHttp`/`http_start`, or load explicitly:
+   `?Application.RegisterXLL("C:\full\path\ExcelBridge-AddIn64-packed.xll")`
+   (must print `True`).
+2. **Mark-of-the-Web**: an XLL copied from a share/browser/email is blocked by
+   Windows and Excel refuses it *silently* (`RegisterXLL` returns `False`).
+   Right-click the file → Properties → **Unblock** (or
+   `Unblock-File` in PowerShell). The most common rollout failure.
+3. **Bitness mismatch**: 64-bit Office needs `ExcelBridge-AddIn64*.xll`; the
+   32-bit flavor loads as nothing. `?Application.OperatingSystem` ending in
+   `64-bit` = use the 64 file.
+4. The XLL was double-clicked and opened in a **different Excel instance**
+   than the one hosting your workbook.
+
+Other checks:
+
+- `?Application.Run("EB_Version")` → `2.0.0` means the correct build is loaded.
 - `?Application.Run("EB_LastDispatchError")` → last failed callback dispatch
   (e.g. a renamed sink or a VBA error inside one).
 - `modBridge.gHttpVerbose = True` → per-completion `Debug.Print` + HttpLog

@@ -239,6 +239,81 @@ Public Sub HeartbeatTick()
 End Sub
 
 ' ============================================================
+'  SELF-TEST
+'  Run from the Immediate window:
+'      modBridge.BridgeSelfTest
+'      modBridge.BridgeSelfTest "https://your-endpoint/health"
+' ============================================================
+
+Public Sub BridgeSelfTest(Optional testUrl As String = "")
+    On Error Resume Next
+
+    ' [1] Is the XLL loaded in THIS Excel instance?
+    Err.Clear
+    Dim ver As Variant
+    ver = Application.Run("EB_Version")
+    If Err.Number <> 0 Then
+        Debug.Print "[1] EB_Version not callable (err " & Err.Number & "): XLL not loaded here. Trying EnsureAddin..."
+        Err.Clear
+        EnsureAddin
+        If Err.Number <> 0 Then
+            Debug.Print "    EnsureAddin failed: " & Err.Description
+            Exit Sub
+        End If
+        ver = Application.Run("EB_Version")
+        If Err.Number <> 0 Then
+            Debug.Print "    Still not callable after RegisterXLL. Check: 64/32-bit XLL flavor, " & _
+                        "and that the file isn't blocked (right-click -> Properties -> Unblock)."
+            Exit Sub
+        End If
+    End If
+    Debug.Print "[1] XLL loaded. EB_Version = " & CStr(ver)
+    If CStr(ver) <> "2.0.0" Then
+        Debug.Print "    WARNING: expected 2.0.0 - a stale build is loaded. Close Excel and replace the XLL."
+    End If
+
+    ' [2] Attach this workbook as the callback target
+    Err.Clear
+    EnsureHttp
+    If Err.Number <> 0 Then
+        Debug.Print "[2] EnsureHttp failed: " & Err.Description
+        Exit Sub
+    End If
+    Debug.Print "[2] Attached '" & ThisWorkbook.name & "' (EB_Attach)"
+
+    If Len(testUrl) = 0 Then
+        Debug.Print "[3] Skipped HTTP round trip - pass a URL: BridgeSelfTest ""https://..."""
+        Exit Sub
+    End If
+
+    ' [3] Blocking round trip (exercises Run marshaling + chunked results)
+    Err.Clear
+    Dim r As cHttpResponse
+    Set r = modHttp.HttpGetSync(testUrl, "", 15000)
+    Debug.Print "[3] sync GET -> status " & r.Status & ", " & Len(r.body) & " chars, " & _
+                r.ElapsedMs & "ms" & IIf(Len(r.ErrorMsg) > 0, ", error: " & r.ErrorMsg, "")
+
+    ' [4] Async round trip (exercises QueueAsMacro -> EB_OnHttpBatch delivery)
+    Err.Clear
+    Dim b As cHttpBatch
+    Set b = New cHttpBatch
+    b.Init
+    b.AddGet testUrl, "", 15000
+    If b.WaitAll(20000) Then
+        Dim ids As Variant: ids = b.ids()
+        Dim resp As cHttpResponse
+        Set resp = b.GetResult(CStr(ids(LBound(ids))))
+        Debug.Print "[4] async GET delivered -> status " & resp.Status & _
+                    IIf(Len(resp.ErrorMsg) > 0, ", error: " & resp.ErrorMsg, "")
+    Else
+        Debug.Print "[4] async GET TIMED OUT. EB_LastDispatchError = " & _
+                    CStr(Application.Run("EB_LastDispatchError"))
+    End If
+
+    On Error GoTo 0
+End Sub
+
+' ============================================================
 '  Message router callbacks
 ' ============================================================
 
