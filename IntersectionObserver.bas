@@ -39,6 +39,12 @@ Private LinkedZoneGroups As Object ' Dictionary mapping LinkedZoneGroupId -> sha
 ' INITIALIZATION & CONFIGURATION
 '===============================================================================
 
+' Idempotent: initializes only if the observer has never been initialized.
+' Safe to call from any registration path; preserves registered zones.
+Public Sub EnsureInitialized(Optional targetWorkbook As Workbook)
+    If Wb Is Nothing Or CachedRanges Is Nothing Then InitializeObserver targetWorkbook
+End Sub
+
 Public Sub InitializeObserver(Optional targetWorkbook As Workbook)
     ' Initialize the observer with minimal overhead
     On Error GoTo ErrHandler
@@ -117,7 +123,8 @@ Public Sub RegisterZoneWithCallback(rangeAddress As String, Mode As Intersection
             Set .RangeObject = Wb.Range(rangeAddress)
         End If
 
-        CachedRanges.Add rangeAddress & "|" & sheetName, .RangeObject
+        ' Upsert: re-registering the same zone must not raise a duplicate-key error
+        Set CachedRanges(rangeAddress & "|" & sheetName) = .RangeObject
 
         ' Initialize linked zone group if new
         If linkedZoneGroupId <> "" Then

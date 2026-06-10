@@ -309,7 +309,24 @@ if it's a local that goes out of scope, `modBridge.gBatchRouter` still holds it
 (strong ref), so results are not lost, but keep a reference if you intend to
 read `GetResult` afterwards.
 
-### 5.4 [NOTE] The hard-coded WS URL lives in code
+### 5.4 [FIXED] Startup no longer opens a socket; observer zones live from open
+`Workbook_Open` called `bridge_start` → `StartBridge` → WS connect loop, so the
+app could never run HTTP-only. It now calls `http_start` (`EnsureHttp` +
+`SetupObserver`); `bridge_start` remains for explicitly enabling the socket
+feed. The heartbeat is only armed by `StartBridge`, so HTTP-only mode has no
+timer that could indirectly trigger a socket connect.
+
+Separately, observer zones were registered **only** inside
+`Workbook_SheetChange` — selection-driven callbacks (the intersection → async
+POST flow) did nothing until the first cell *edit* on a `cms_col` sheet, and
+`SetupObserver` was an empty stub. Registration now lives in one routine
+(`RegisterObserverZones`), called from startup, `Workbook_SheetActivate`
+(zones are bound per sheet name and previously kept pointing at the old sheet
+until an edit), and `Workbook_SheetChange` as before. `IntersectionObserver`
+gained an idempotent `EnsureInitialized`, and the range cache upserts instead
+of throwing on duplicate registration.
+
+### 5.5 [NOTE] The hard-coded WS URL lives in code
 `BridgeWsUrl()` (extracted in this change) still embeds the dev endpoint.
 Move it to a named range / Settings sheet alongside `SDR.Host` /
 `Webhook.Port`, which already follow that pattern.
