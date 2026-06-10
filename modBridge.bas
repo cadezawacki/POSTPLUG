@@ -146,16 +146,55 @@ Public Sub EnsureBridge()
     ' Restart the WS only if the loop has exited entirely; while it is
     ' running (connected OR mid-reconnect) leave it alone.
     EnsureHttp
-    If Not CBool(Application.Run("EB_WsIsRunning")) Then
+    If Not WsIsRunning() Then
         StartBridge
     End If
+End Sub
+
+' ============================================================
+'  TYPED WRAPPERS around the XLL entry points.
+'  Use these (and modHttp) from VBA code and the Immediate
+'  window instead of raw Application.Run "EB_*" calls - they
+'  get the quoting/marshaling right and give IntelliSense.
+'      ?modBridge.BridgeVersion
+'      ?modBridge.BridgeDiag
+'      ?modBridge.WsIsConnected
+' ============================================================
+
+Public Function BridgeVersion() As String
+    EnsureAddin
+    BridgeVersion = CStr(Application.Run("EB_Version"))
+End Function
+
+Public Function BridgeDiag() As String
+    EnsureAddin
+    BridgeDiag = CStr(Application.Run("EB_Diag"))
+End Function
+
+Public Function BridgeLastDispatchError() As String
+    If Not AddinLoaded() Then Exit Function
+    BridgeLastDispatchError = CStr(Application.Run("EB_LastDispatchError"))
+End Function
+
+Public Function WsIsConnected() As Boolean
+    If Not AddinLoaded() Then Exit Function
+    WsIsConnected = CBool(Application.Run("EB_WsIsConnected"))
+End Function
+
+Public Function WsIsRunning() As Boolean
+    If Not AddinLoaded() Then Exit Function
+    WsIsRunning = CBool(Application.Run("EB_WsIsRunning"))
+End Function
+
+Public Sub WsSend(msgType As String, Optional jsonPayload As String = "")
+    EnsureBridge
+    Application.Run "EB_WsSend", msgType, jsonPayload
 End Sub
 
 ' ---- Example extensibility: pure-VBA commands (no DLL rebuild) ----
 
 Public Sub SendPing()
-    EnsureBridge
-    Application.Run "EB_WsSend", "ping", ""
+    WsSend "ping"
 End Sub
 
 Public Sub SendClear()
@@ -226,10 +265,8 @@ Public Sub HeartbeatTick()
 
     ' Only fire if connected
     On Error Resume Next
-    If AddinLoaded() Then
-        If CBool(Application.Run("EB_WsIsConnected")) Then
-            Application.Run gHeartbeatCallback
-        End If
+    If WsIsConnected() Then
+        Application.Run gHeartbeatCallback
     End If
     On Error GoTo 0
 

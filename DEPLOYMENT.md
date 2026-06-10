@@ -87,6 +87,29 @@ VBA  <--Application.Run sink----  VbaDispatcher (QueueAsMacro, main thread, batc
 | `EB_OnWsStatus(state, detail)` | connected / disconnected / reconnecting |
 | `EB_OnLog(level, message)` | diagnostics |
 
+### Calling conventions (avoiding error 424)
+
+Prefer the **typed VBA wrappers** over raw `Application.Run "EB_*"` calls:
+`modHttp.*` for HTTP, and `modBridge.BridgeVersion / BridgeDiag /
+BridgeLastDispatchError / WsIsConnected / WsIsRunning / WsSend` for the rest.
+
+If you do call `Run` directly, the macro name must be a **string literal in
+straight quotes**, and the two valid shapes are:
+
+```vba
+' Expression form (Immediate window) - parens, ? prints the return value:
+?Application.Run("EB_Version")
+
+' Statement form (in code) - NO parens around the argument list:
+Application.Run "EB_WsSend", "ping", ""
+```
+
+Error **424 "Object required"** on a `Run` line means Excel never received a
+usable macro name: an unquoted name (`Application.Run EB_Version` - an empty
+variant that Excel tries to treat as an object), curly quotes from a
+chat/Notes paste (`“EB_Version”`), or the XLL not being loaded in this
+instance (see Troubleshooting).
+
 ### Entry-point argument types
 
 All `EB_*` HTTP entry points take coercive `object` parameters, so any VBA
