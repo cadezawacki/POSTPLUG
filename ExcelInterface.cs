@@ -3,6 +3,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using ExcelDna.Integration;
@@ -97,6 +98,34 @@ namespace ExcelBridge
 
         [ExcelFunction(IsHidden = true)]
         public static string EB_LastDispatchError() { return VbaDispatcher.LastError; }
+
+        // One-line health report: which XLL file is actually loaded and
+        // whether the Newtonsoft.Json dependency resolves (it loads lazily,
+        // so a missing DLL otherwise only surfaces on the first HTTP call).
+        [ExcelFunction(IsHidden = true)]
+        public static string EB_Diag()
+        {
+            var sb = new StringBuilder("version=2.0.0");
+            try { sb.Append("; xll=").Append(ExcelDnaUtil.XllPath); }
+            catch (Exception ex) { sb.Append("; xll=? (").Append(ex.Message).Append(')'); }
+            sb.Append("; newtonsoft=").Append(ProbeNewtonsoft());
+            return sb.ToString();
+        }
+
+        private static string ProbeNewtonsoft()
+        {
+            try { return ProbeNewtonsoftCore(); }
+            catch (Exception ex) { return "MISSING - " + ex.GetBaseException().Message; }
+        }
+
+        // NoInlining keeps the Newtonsoft type reference out of the caller, so
+        // a resolution failure throws here, inside the try, instead of when
+        // the calling method is JIT-compiled.
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static string ProbeNewtonsoftCore()
+        {
+            return typeof(Newtonsoft.Json.JsonConvert).Assembly.GetName().Version.ToString();
+        }
 
         // ---------- HTTP ----------
         //

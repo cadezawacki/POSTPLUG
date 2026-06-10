@@ -21,7 +21,14 @@ Outputs (in `bin\Release\net48\`):
 | `ExcelBridge-AddIn64.xll` / `ExcelBridge-AddIn.xll` | Unpacked variants (need the DLLs beside them) — dev use |
 
 You may rename the packed file to `ExcelBridge-AddIn64.xll`; the VBA loader
-(`modBridge.EnsureAddin`) probes both names.
+(`modBridge.EnsureAddin`) probes the packed name first, then the plain name.
+
+> **Ship ONLY the packed file.** The unpacked XLL loads `ExcelBridge.dll` from
+> disk and resolves `Newtonsoft.Json.dll` lazily — if either is missing beside
+> it, `EB_Version` still works and the failure surfaces later, on the first
+> HTTP call ("Could not load file or assembly 'Newtonsoft.Json…'").
+> `?Application.Run("EB_Diag")` reports the loaded XLL path and whether the
+> dependency resolves.
 
 ## 2. Roll out
 

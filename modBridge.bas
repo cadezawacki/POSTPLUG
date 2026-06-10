@@ -62,12 +62,14 @@ Public Sub EnsureAddin()
 
     Dim base As String
     base = ThisWorkbook.Path & Application.PathSeparator
+    ' Packed first: it is self-contained. The unpacked flavor only works with
+    ' ExcelBridge.dll AND Newtonsoft.Json.dll sitting beside it.
     #If Win64 Then
-        candidates(n) = base & "ExcelBridge-AddIn64.xll": n = n + 1
         candidates(n) = base & "ExcelBridge-AddIn64-packed.xll": n = n + 1
+        candidates(n) = base & "ExcelBridge-AddIn64.xll": n = n + 1
     #Else
-        candidates(n) = base & "ExcelBridge-AddIn.xll": n = n + 1
         candidates(n) = base & "ExcelBridge-AddIn-packed.xll": n = n + 1
+        candidates(n) = base & "ExcelBridge-AddIn.xll": n = n + 1
     #End If
 
     Dim i As Long
@@ -270,6 +272,18 @@ Public Sub BridgeSelfTest(Optional testUrl As String = "")
     Debug.Print "[1] XLL loaded. EB_Version = " & CStr(ver)
     If CStr(ver) <> "2.0.0" Then
         Debug.Print "    WARNING: expected 2.0.0 - a stale build is loaded. Close Excel and replace the XLL."
+    End If
+    Err.Clear
+    Dim diag As Variant
+    diag = Application.Run("EB_Diag")
+    If Err.Number = 0 Then
+        Debug.Print "    " & CStr(diag)
+        If InStr(1, CStr(diag), "newtonsoft=MISSING", vbTextCompare) > 0 Then
+            Debug.Print "    -> Dependencies missing: deploy the single-file " & _
+                        "ExcelBridge-AddIn64-packed.xll (the unpacked XLL needs " & _
+                        "ExcelBridge.dll AND Newtonsoft.Json.dll beside it). Restart Excel after swapping."
+            Exit Sub
+        End If
     End If
 
     ' [2] Attach this workbook as the callback target
