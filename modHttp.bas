@@ -71,13 +71,32 @@ Public Function HttpSendFF(method As String, URL As String, body As String, _
                            headers As String, timeoutMs As Long) As String
     ' EnsureHttp loads/attaches the XLL only - it never opens a WebSocket.
     modBridge.EnsureHttp
+    Dim v As Variant
     If Len(body) > CHUNK_MAX Then
-        HttpSendFF = Application.Run("EB_HttpSendAsyncBody", method, URL, _
-                                     StageBody(body), headers, timeoutMs)
+        v = Application.Run("EB_HttpSendAsyncBody", method, URL, _
+                            StageBody(body), headers, timeoutMs)
     Else
-        HttpSendFF = Application.Run("EB_HttpSendAsync", method, URL, _
-                                     body, headers, timeoutMs)
+        v = Application.Run("EB_HttpSendAsync", method, URL, _
+                            body, headers, timeoutMs)
     End If
+    HttpSendFF = CheckedRequestId(v, method, URL)
+End Function
+
+' The XLL returns either a requestId, "#ERR <reason>", or (if the call could
+' not even be dispatched) an Excel error value. Raise a descriptive VBA error
+' instead of letting the caller hit a bare "Type mismatch" on assignment.
+Private Function CheckedRequestId(ByVal v As Variant, method As String, URL As String) As String
+    If IsError(v) Then
+        Err.Raise vbObjectError + 514, "modHttp", _
+            "ExcelBridge call failed (Excel error value) for " & method & " " & URL & ". " & _
+            "Verify the v2 XLL is loaded: ?Application.Run(""EB_Version"") should return 2.0.0."
+    End If
+    Dim s As String: s = CStr(v)
+    If Left$(s, 5) = "#ERR " Then
+        Err.Raise vbObjectError + 515, "modHttp", _
+            "ExcelBridge: " & mid$(s, 6) & " (" & method & " " & URL & ")"
+    End If
+    CheckedRequestId = s
 End Function
 
 Public Sub HttpCancel(requestId As String)
@@ -133,6 +152,13 @@ Public Function HttpRequestSync(method As String, URL As String, body As String,
     Else
         result = Application.Run("EB_HttpSendSync", method, URL, _
                                  body, headers, timeoutMs)
+    End If
+
+    If IsError(result) Then
+        r.ErrorMsg = "ExcelBridge call failed (Excel error value). " & _
+                     "Verify the v2 XLL is loaded: EB_Version should return 2.0.0."
+        Set HttpRequestSync = r
+        Exit Function
     End If
 
     Dim v() As Variant

@@ -99,33 +99,64 @@ namespace ExcelBridge
         public static string EB_LastDispatchError() { return VbaDispatcher.LastError; }
 
         // ---------- HTTP ----------
+        //
+        // Entry points reached via Application.Run take object parameters and
+        // coerce: a typed int/string parameter turns an omitted argument
+        // (ExcelMissing) into a silent #VALUE!, which VBA then surfaces as a
+        // bare "Type mismatch" on assignment. Failures return "#ERR <reason>"
+        // so the VBA wrapper can raise something actionable instead.
 
         [ExcelFunction(IsHidden = true)]
-        public static string EB_HttpSendAsync(string method, string url, string body, string headers, int timeoutMs)
+        public static string EB_HttpSendAsync(object method, object url, object body, object headers, object timeoutMs)
         {
-            EnsureWired();
-            return Engine.HttpSendAsync(method, url, body ?? "", headers ?? "", timeoutMs);
+            try
+            {
+                EnsureWired();
+                string u = ToStr(url);
+                if (u.Length == 0) return "#ERR url is required";
+                return Engine.HttpSendAsync(ToStr(method), u, ToStr(body), ToStr(headers), ToInt(timeoutMs));
+            }
+            catch (Exception ex) { return "#ERR " + ex.GetBaseException().Message; }
         }
 
         [ExcelFunction(IsHidden = true)]
-        public static string EB_HttpSendAsyncBody(string method, string url, string bodyToken, string headers, int timeoutMs)
+        public static string EB_HttpSendAsyncBody(object method, object url, object bodyToken, object headers, object timeoutMs)
         {
-            EnsureWired();
-            return Engine.HttpSendAsync(method, url, TakeStagedBody(bodyToken), headers ?? "", timeoutMs);
+            try
+            {
+                EnsureWired();
+                string u = ToStr(url);
+                if (u.Length == 0) return "#ERR url is required";
+                return Engine.HttpSendAsync(ToStr(method), u, TakeStagedBody(ToStr(bodyToken)), ToStr(headers), ToInt(timeoutMs));
+            }
+            catch (Exception ex) { return "#ERR " + ex.GetBaseException().Message; }
         }
 
         [ExcelFunction(IsHidden = true)]
-        public static object EB_HttpSendSync(string method, string url, string body, string headers, int timeoutMs)
+        public static object EB_HttpSendSync(object method, object url, object body, object headers, object timeoutMs)
         {
-            EnsureWired();
-            return PackSyncResult(Engine.HttpSendSync(method, url, body ?? "", headers ?? "", timeoutMs));
+            try
+            {
+                EnsureWired();
+                return PackSyncResult(Engine.HttpSendSync(ToStr(method), ToStr(url), ToStr(body), ToStr(headers), ToInt(timeoutMs)));
+            }
+            catch (Exception ex) { return SyncErrorRow(ex); }
         }
 
         [ExcelFunction(IsHidden = true)]
-        public static object EB_HttpSendSyncBody(string method, string url, string bodyToken, string headers, int timeoutMs)
+        public static object EB_HttpSendSyncBody(object method, object url, object bodyToken, object headers, object timeoutMs)
         {
-            EnsureWired();
-            return PackSyncResult(Engine.HttpSendSync(method, url, TakeStagedBody(bodyToken), headers ?? "", timeoutMs));
+            try
+            {
+                EnsureWired();
+                return PackSyncResult(Engine.HttpSendSync(ToStr(method), ToStr(url), TakeStagedBody(ToStr(bodyToken)), ToStr(headers), ToInt(timeoutMs)));
+            }
+            catch (Exception ex) { return SyncErrorRow(ex); }
+        }
+
+        private static object SyncErrorRow(Exception ex)
+        {
+            return new object[] { 0, "", "{}", 0, ex.GetBaseException().Message, "", 0 };
         }
 
         [ExcelFunction(IsHidden = true)]
@@ -136,9 +167,10 @@ namespace ExcelBridge
         }
 
         [ExcelFunction(IsHidden = true)]
-        public static bool EB_HttpSetDefaultTimeout(int timeoutMs)
+        public static bool EB_HttpSetDefaultTimeout(object timeoutMs)
         {
-            if (timeoutMs > 0) Engine.HttpDefaultTimeoutMs = timeoutMs;
+            int t = ToInt(timeoutMs);
+            if (t > 0) Engine.HttpDefaultTimeoutMs = t;
             return true;
         }
 
@@ -171,11 +203,11 @@ namespace ExcelBridge
         // ---------- large-string retrieval (XLL -> VBA, sync path only) ----------
 
         [ExcelFunction(IsHidden = true)]
-        public static string EB_ResultChunk(string token, int index)
+        public static string EB_ResultChunk(string token, object index)
         {
             Tuple<string, DateTime> entry;
             if (token == null || !_stagedResults.TryGetValue(token, out entry)) return "";
-            int start = index * ChunkMax;
+            int start = ToInt(index) * ChunkMax;
             if (start < 0 || start >= entry.Item1.Length) return "";
             int len = Math.Min(ChunkMax, entry.Item1.Length - start);
             return entry.Item1.Substring(start, len);
@@ -212,6 +244,45 @@ namespace ExcelBridge
             if (headersJson.Length > ChunkMax) headersJson = headersJson.Substring(0, ChunkMax);
 
             return new object[] { r[0], inline, headersJson, r[3], r[4], token, body.Length };
+        }
+
+        // ---------- argument coercion (Application.Run marshaling) ----------
+
+        private static string ToStr(object v)
+        {
+            if (v == null || v is ExcelMissing || v is ExcelEmpty || v is ExcelError) return "";
+            var s = v as string;
+            if (s != null) return s;
+            return Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture) ?? "";
+        }
+
+        private static int ToInt(object v, int fallback = 0)
+        {
+            if (v == null || v is ExcelMissing || v is ExcelEmpty || v is ExcelError) return fallback;
+            if (v is double) return (int)(double)v;
+            if (v is int) return (int)v;
+            if (v is bool) return (bool)v ? 1 : 0;
+            var s = v as string;
+            if (s != null)
+            {
+                int r;
+                return int.TryParse(s, out r) ? r : fallback;
+            }
+            try { return Convert.ToInt32(v); } catch { return fallback; }
+        }
+
+        private static bool ToBool(object v, bool fallback = false)
+        {
+            if (v == null || v is ExcelMissing || v is ExcelEmpty || v is ExcelError) return fallback;
+            if (v is bool) return (bool)v;
+            if (v is double) return (double)v != 0;
+            var s = v as string;
+            if (s != null)
+            {
+                bool r;
+                return bool.TryParse(s, out r) ? r : fallback;
+            }
+            try { return Convert.ToBoolean(v); } catch { return fallback; }
         }
 
         private static void PurgeStaleResults()
@@ -258,21 +329,24 @@ namespace ExcelBridge
         public static bool EB_WsIsRunning() { return Engine.IsRunning; }
 
         [ExcelFunction(IsHidden = true)]
-        public static bool EB_WsConfig(bool autoReconnect, int maxReconnectDelayMs,
-                                       bool raiseGenericOnMessage, int batchWindowMs, int batchMaxCount)
+        public static bool EB_WsConfig(object autoReconnect, object maxReconnectDelayMs,
+                                       object raiseGenericOnMessage, object batchWindowMs, object batchMaxCount)
         {
-            Engine.AutoReconnect = autoReconnect;
-            if (maxReconnectDelayMs > 0) Engine.MaxReconnectDelayMs = maxReconnectDelayMs;
-            Engine.RaiseGenericOnMessage = raiseGenericOnMessage;
-            if (batchWindowMs > 0) Engine.BatchWindowMs = batchWindowMs;
-            if (batchMaxCount > 0) Engine.BatchMaxCount = batchMaxCount;
+            Engine.AutoReconnect = ToBool(autoReconnect, true);
+            int v = ToInt(maxReconnectDelayMs);
+            if (v > 0) Engine.MaxReconnectDelayMs = v;
+            Engine.RaiseGenericOnMessage = ToBool(raiseGenericOnMessage);
+            v = ToInt(batchWindowMs);
+            if (v > 0) Engine.BatchWindowMs = v;
+            v = ToInt(batchMaxCount);
+            if (v > 0) Engine.BatchMaxCount = v;
             return true;
         }
 
         [ExcelFunction(IsHidden = true)]
-        public static bool EB_PushCell(int row, int col, string value)
+        public static bool EB_PushCell(object row, object col, string value)
         {
-            Engine.PushCell(row, col, value ?? "");
+            Engine.PushCell(ToInt(row), ToInt(col), value ?? "");
             return true;
         }
 

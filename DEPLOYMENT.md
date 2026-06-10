@@ -80,6 +80,24 @@ VBA  <--Application.Run sink----  VbaDispatcher (QueueAsMacro, main thread, batc
 | `EB_OnWsStatus(state, detail)` | connected / disconnected / reconnecting |
 | `EB_OnLog(level, message)` | diagnostics |
 
+### Entry-point argument types
+
+All `EB_*` HTTP entry points take coercive `object` parameters, so any VBA
+type that sensibly converts is accepted (String/Long/Double/Boolean; omitted
+arguments fall back to defaults). The canonical call shape:
+
+```vba
+' returns requestId (String); timeoutMs 0 = use default
+id = Application.Run("EB_HttpSendAsync", method$, url$, body$, headers$, timeoutMs&)
+```
+
+Failures return the string `"#ERR <reason>"` (async) or an error message in
+the result row (sync) — `modHttp` converts both into descriptive VBA errors.
+A raw **"Type mismatch" (13)** when assigning a `Run` result means the
+function itself returned an Excel error value: almost always a stale 1.x XLL
+still loaded, or a renamed/missing entry point. Check
+`?Application.Run("EB_Version")` first.
+
 ### String-size limits (the one XLL constraint)
 
 Excel's evaluator caps **VBA → XLL** string arguments at 32,767 chars.
