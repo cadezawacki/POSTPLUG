@@ -9,6 +9,7 @@ Option Explicit
 
 Public gHost As cBridgeHost
 Public gSuspendEvents As Boolean
+Public gHttpVerbose As Boolean   ' opt-in: Debug.Print + HttpLog sheet per HTTP completion
 Private gBatchRouter As Object   ' Scripting.Dictionary
 
 ' Heartbeat / keep-alive timer
@@ -25,8 +26,10 @@ Private gHeartbeatActive As Boolean     ' is the timer running?
 
 
 Public Sub StartBridge()
-    ' Initialize message router
-    modSocketRouter.InitRouter
+    ' Initialize message router only if it hasn't been already: StartBridge is
+    ' re-entered by EnsureBridge restarts, and InitRouter would wipe every
+    ' registered route (messages then silently fall through to nothing).
+    modSocketRouter.EnsureRouter
     'modSocketRouter.RouteDefault "modBridge.HandleUnknown"
 
     ' Configure heartbeat (fires SendPing every X seconds while connected)
@@ -35,8 +38,19 @@ Public Sub StartBridge()
     If gHost Is Nothing Then
         Set gHost = New cBridgeHost
     End If
-    gHost.StartUp "ws://cds-sn-api-dev.sik.intranet.barcapint.com/ws/cds?username=" & User_GetUserName()
-    
+    gHost.StartWs BridgeWsUrl()
+
+End Sub
+
+Private Function BridgeWsUrl() As String
+    BridgeWsUrl = "ws://cds-sn-api-dev.sik.intranet.barcapint.com/ws/cds?username=" & User_GetUserName()
+End Function
+
+' HTTP-only entry point: creates the Bridge COM object WITHOUT opening a
+' WebSocket. REST calls must never force (or restart) a socket connection.
+Public Sub EnsureHttp()
+    If gHost Is Nothing Then Set gHost = New cBridgeHost
+    gHost.EnsureObject
 End Sub
 
 Public Sub StopBridge()
@@ -45,18 +59,19 @@ Public Sub StopBridge()
 End Sub
 
 Public Sub EnsureBridge()
-    ' Restart bridge only if truly dead (not just mid-reconnect)
+    ' Restart bridge only if truly dead (not just mid-reconnect).
+    ' Never discard gHost here: throwing the host away orphans the event sink
+    ' for every in-flight HTTP request (their completions would be raised on
+    ' the old, unreferenced Bridge and lost). Restart the WS loop in place.
     If gHost Is Nothing Then
         StartBridge
     ElseIf gHost.b Is Nothing Then
-        Set gHost = Nothing
         StartBridge
     ElseIf Not gHost.b.IsRunning Then
-        ' Loop has exited entirely � restart
-        Set gHost = Nothing
-        StartBridge
+        ' WS loop has exited entirely - restart it on the same Bridge object
+        gHost.StartWs BridgeWsUrl()
     End If
-    ' If IsRunning=True but IsConnected=False, it's reconnecting � leave it alone
+    ' If IsRunning=True but IsConnected=False, it's reconnecting - leave it alone
 End Sub
 
 ' ---- Example extensibility: pure-VBA commands (no DLL rebuild) ----
@@ -108,6 +123,9 @@ End Sub
 
 Public Sub StartHeartbeat()
     If gHeartbeatSeconds <= 0 Or Len(gHeartbeatCallback) = 0 Then Exit Sub
+    ' Cancel any pending tick first: re-arming without cancelling spawns a
+    ' second OnTime chain (each restart would add another, multiplying pings).
+    StopHeartbeat
     gHeartbeatActive = True
     gHeartbeatNextRun = Now + TimeSerial(0, 0, gHeartbeatSeconds)
     Application.OnTime gHeartbeatNextRun, "modBridge.HeartbeatTick"

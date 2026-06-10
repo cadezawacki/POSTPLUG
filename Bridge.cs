@@ -116,6 +116,7 @@ namespace ExcelBridge
         private Task _loopTask;
         private Uri _uri;
         private volatile bool _shuttingDown;
+        private int _generation;            // bumped on every Start/Stop to fence stale connect loops
 
         private readonly object _outboxLock = new object();
         private readonly LinkedList<string> _outbox = new LinkedList<string>();
@@ -226,9 +227,10 @@ namespace ExcelBridge
             _uri = new Uri(url);
             _cts = new CancellationTokenSource();
             var token = _cts.Token;
+            int gen = Interlocked.Increment(ref _generation);
             int window = Math.Max(4, BatchWindowMs);
             _batchTimer = new Timer(_ => { try { FlushBatch(); } catch { } }, null, window, window);
-            _loopTask = Task.Run(() => ConnectLoopAsync(token));
+            _loopTask = Task.Run(() => ConnectLoopAsync(gen, token));
         }
 
         public void Stop()
@@ -236,6 +238,7 @@ namespace ExcelBridge
             try
             {
                 _shuttingDown = true;
+                Interlocked.Increment(ref _generation);   // fence any connect loop still running
                 var cts = _cts;
                 cts?.Cancel();
 
@@ -256,8 +259,8 @@ namespace ExcelBridge
                 try { _batchTimer?.Dispose(); } catch { }
                 _batchTimer = null;
                 FlushBatch();
-                try { _ws?.Dispose(); } catch { }
-                _ws = null;
+                var oldWs = Interlocked.Exchange(ref _ws, null);
+                try { oldWs?.Dispose(); } catch { }
                 try { _cts?.Dispose(); } catch { }
                 _cts = null;
             }
@@ -328,24 +331,29 @@ namespace ExcelBridge
         // =====================================================
         //  Connect / receive loops
         // =====================================================
-        private async Task ConnectLoopAsync(CancellationToken ct)
+        private async Task ConnectLoopAsync(int gen, CancellationToken ct)
         {
             int attempt = 0;
             while (!ct.IsCancellationRequested && !_shuttingDown)
             {
-                _ws = new ClientWebSocket();
-                _ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(10);
+                var ws = new ClientWebSocket();
+                ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(10);
+
+                // A newer Start()/Stop() owns the bridge now — bow out without
+                // touching shared state.
+                if (gen != Volatile.Read(ref _generation)) { try { ws.Dispose(); } catch { } return; }
+                _ws = ws;
 
                 try
                 {
                     Log("info", $"connecting to {_uri} (attempt {attempt + 1})");
-                    await _ws.ConnectAsync(_uri, ct).ConfigureAwait(false);
+                    await ws.ConnectAsync(_uri, ct).ConfigureAwait(false);
                     attempt = 0;
                     Raise(() => OnConnected?.Invoke());
 
                     _ = Task.Run(() => FlushOutboxAsync(ct));
 
-                    await ReceiveLoopAsync(ct).ConfigureAwait(false);
+                    await ReceiveLoopAsync(ws, ct).ConfigureAwait(false);
                     Raise(() => OnDisconnected?.Invoke("closed"));
                 }
                 catch (OperationCanceledException)
@@ -360,11 +368,14 @@ namespace ExcelBridge
                 }
                 finally
                 {
-                    try { _ws?.Dispose(); } catch { }
-                    _ws = null;
+                    // Clear the shared field only if it is still our socket;
+                    // a newer loop may have replaced it already.
+                    Interlocked.CompareExchange(ref _ws, null, ws);
+                    try { ws.Dispose(); } catch { }
                 }
 
-                if (_shuttingDown || !AutoReconnect || ct.IsCancellationRequested) return;
+                if (_shuttingDown || !AutoReconnect || ct.IsCancellationRequested ||
+                    gen != Volatile.Read(ref _generation)) return;
 
                 attempt++;
                 int delay = Math.Min(MaxReconnectDelayMs,
@@ -379,18 +390,18 @@ namespace ExcelBridge
             }
         }
 
-        private async Task ReceiveLoopAsync(CancellationToken ct)
+        private async Task ReceiveLoopAsync(ClientWebSocket ws, CancellationToken ct)
         {
             var buffer = new byte[64 * 1024];
             var seg = new ArraySegment<byte>(buffer);
             MemoryStream ms = null;
 
-            while (!ct.IsCancellationRequested && _ws != null && _ws.State == WebSocketState.Open)
+            while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
             {
                 WebSocketReceiveResult result;
                 try
                 {
-                    result = await _ws.ReceiveAsync(seg, ct).ConfigureAwait(false);
+                    result = await ws.ReceiveAsync(seg, ct).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) { return; }
                 catch { return; }
@@ -399,7 +410,7 @@ namespace ExcelBridge
                 {
                     try
                     {
-                        await _ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "ack",
+                        await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "ack",
                             CancellationToken.None).ConfigureAwait(false);
                     }
                     catch { }
@@ -420,7 +431,7 @@ namespace ExcelBridge
                 {
                     try
                     {
-                        result = await _ws.ReceiveAsync(seg, ct).ConfigureAwait(false);
+                        result = await ws.ReceiveAsync(seg, ct).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) { return; }
                     catch { return; }
@@ -441,7 +452,7 @@ namespace ExcelBridge
 				if (token.Type == JTokenType.Array)
 				{
 					var arr = (JArray)token;
-					Log("info", $"dispatch array: {arr.Count} items");
+					Log("debug", $"dispatch array: {arr.Count} items");
 					foreach (var item in arr)
 					{
 						if (item.Type == JTokenType.Object)
@@ -452,7 +463,10 @@ namespace ExcelBridge
 
 				if (token.Type == JTokenType.Object)
 				{
-					DispatchObject((JObject)token);
+					// Hand the original wire text through when it is already in the
+					// compact form VBA's scanners expect, so DispatchObject can skip
+					// a full re-serialization of the payload.
+					DispatchObject((JObject)token, LooksCompact(json) ? json : null);
 					return;
 				}
 
@@ -464,7 +478,7 @@ namespace ExcelBridge
 			}
 		}
 
-		private void DispatchObject(JObject root)
+		private void DispatchObject(JObject root, string raw = null)
 		{
 			var type = root.Value<string>("type") ?? "";
 
@@ -474,12 +488,22 @@ namespace ExcelBridge
 				return;
 			}
 
-			var raw = root.ToString(Formatting.None);
+			if (raw == null) raw = root.ToString(Formatting.None);
 
 			if (RaiseGenericOnMessage)
 				Raise(() => OnMessage?.Invoke(type, raw));
 
 			EnqueueBatch(raw);
+		}
+
+		// VBA-side routing (ExtractJsonValue / RouteBatch) scans for compact
+		// "key":value text. Only skip re-serialization when the wire text is
+		// already in that shape; false negatives just fall back to ToString.
+		private static bool LooksCompact(string json)
+		{
+			return json.IndexOf('\n') < 0 && json.IndexOf('\r') < 0 &&
+			       json.IndexOf("\": ", StringComparison.Ordinal) < 0 &&
+			       json.IndexOf("\" :", StringComparison.Ordinal) < 0;
 		}
 
         // =====================================================
@@ -520,9 +544,19 @@ namespace ExcelBridge
         // =====================================================
         //  Send plumbing
         // =====================================================
+        private const int MaxOutboxCount = 10000;
+
         private void EnqueueSend(string body)
         {
-            lock (_outboxLock) _outbox.AddLast(body);
+            bool dropped = false;
+            lock (_outboxLock)
+            {
+                // Bound the queue: while disconnected, callers can otherwise
+                // grow this list without limit.
+                if (_outbox.Count >= MaxOutboxCount) { _outbox.RemoveFirst(); dropped = true; }
+                _outbox.AddLast(body);
+            }
+            if (dropped) RaiseError("outbox overflow: dropped oldest queued message");
             var cts = _cts;
             if (IsConnected && cts != null && !cts.IsCancellationRequested)
                 _ = Task.Run(() => FlushOutboxAsync(cts.Token));
@@ -538,8 +572,11 @@ namespace ExcelBridge
 
             try
             {
-                while (IsConnected && !ct.IsCancellationRequested)
+                while (!ct.IsCancellationRequested)
                 {
+                    var ws = _ws;
+                    if (ws == null || ws.State != WebSocketState.Open) return;
+
                     string body;
                     lock (_outboxLock)
                     {
@@ -551,7 +588,7 @@ namespace ExcelBridge
                     try
                     {
                         var bytes = Encoding.UTF8.GetBytes(body);
-                        await _ws.SendAsync(new ArraySegment<byte>(bytes),
+                        await ws.SendAsync(new ArraySegment<byte>(bytes),
                             WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException)
@@ -730,8 +767,23 @@ namespace ExcelBridge
             using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct)
                                         .ConfigureAwait(false);
 
-            byte[] bytes = await resp.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
-            string text = bytes.Length == 0 ? "" : Encoding.UTF8.GetString(bytes);
+            // ReadAsStringAsync honors the response charset (the old manual UTF-8
+            // decode corrupted non-UTF-8 bodies). On net48 the body read does not
+            // observe the CancellationToken, so a server that returns headers and
+            // then trickles the body would bypass the timeout entirely — register
+            // a dispose to abort the read when the token fires.
+            string text;
+            try
+            {
+                using (ct.Register(s => { try { ((HttpResponseMessage)s).Dispose(); } catch { } }, resp))
+                {
+                    text = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                }
+            }
+            catch (Exception) when (ct.IsCancellationRequested)
+            {
+                throw new OperationCanceledException(ct);
+            }
 
             // Headers -> compact JSON
             var headersObj = new JObject();
@@ -750,12 +802,29 @@ namespace ExcelBridge
         // =====================================================
         //  Raise helpers
         // =====================================================
+        private const uint RPC_E_CALL_REJECTED        = 0x80010001;
+        private const uint RPC_E_SERVERCALL_RETRYLATER = 0x8001010A;
+
         private void Raise(Action a)
         {
-            try { a(); }
-            catch (Exception ex)
+            // Events are raised from worker threads into Excel's STA. While the
+            // user is editing a cell or a dialog is open, Excel rejects incoming
+            // COM calls; swallowing that would silently drop the event (e.g. an
+            // HTTP completion, hanging any batch waiting on it). Retry instead.
+            for (int attempt = 0; ; attempt++)
             {
-                try { OnLog?.Invoke("error", "handler threw: " + ex.Message); } catch { }
+                try { a(); return; }
+                catch (COMException ex) when (attempt < 10 &&
+                    ((uint)ex.HResult == RPC_E_CALL_REJECTED ||
+                     (uint)ex.HResult == RPC_E_SERVERCALL_RETRYLATER))
+                {
+                    Thread.Sleep(50 * (attempt + 1));
+                }
+                catch (Exception ex)
+                {
+                    try { OnLog?.Invoke("error", "handler threw: " + ex.Message); } catch { }
+                    return;
+                }
             }
         }
 

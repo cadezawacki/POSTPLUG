@@ -10,21 +10,24 @@ Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 Option Explicit
 
-Private mResults As Object          ' Scripting.Dictionary: id -> HttpResponse
+Private mResults As Object          ' Scripting.Dictionary: id -> cHttpResponse
 Private mPending As Long
 Private mCallback As String         ' optional: name of a Public Sub to call on each completion
 Private mCallbackTarget As Object   ' optional: object that has the callback method
 Private mSimpleCallback As String
+Private mAllCompleteCallback As String  ' optional: Public Sub fired once when the last request completes
 
 Public Sub Init()
     Set mResults = CreateObject("Scripting.Dictionary")
     mPending = 0
     mCallback = ""
     Set mCallbackTarget = Nothing
+    mSimpleCallback = ""
+    mAllCompleteCallback = ""
 End Sub
 
 ' Per-request callback: invoked each time a request completes.
-' The target object must implement:  Public Sub <callbackName>(requestId As String, r As HttpResponse)
+' The target object must implement:  Public Sub <callbackName>(requestId As String, r As cHttpResponse)
 Public Sub SetCallback(Target As Object, methodName As String)
     Set mCallbackTarget = Target
     mCallback = methodName
@@ -32,6 +35,12 @@ End Sub
 
 Public Sub SetSimpleCallback(methodName As String)
     mSimpleCallback = methodName
+End Sub
+
+' Fired once, asynchronously, when the final pending request completes.
+' The target must be:  Public Sub <methodName>(batch As cHttpBatch)
+Public Sub SetAllCompleteCallback(methodName As String)
+    mAllCompleteCallback = methodName
 End Sub
 
 ' Add a fire-and-forget request. Returns the request id.
@@ -79,7 +88,10 @@ Public Function WaitAll(Optional overallTimeoutMs As Long = 0) As Boolean
         Sleep 5    ' tiny yield so we're not burning 100% CPU
 
         If overallTimeoutMs > 0 Then
-            If (Timer - startTick) * 1000 > overallTimeoutMs Then
+            Dim elapsedSec As Double
+            elapsedSec = Timer - startTick
+            If elapsedSec < 0 Then elapsedSec = elapsedSec + 86400  ' Timer resets at midnight
+            If elapsedSec * 1000 > overallTimeoutMs Then
                 WaitAll = False
                 Exit Function
             End If
@@ -102,6 +114,12 @@ Friend Sub OnComplete(requestId As String, r As cHttpResponse)
     ElseIf Len(mSimpleCallback) > 0 Then
         On Error Resume Next
         Application.Run mSimpleCallback, requestId, r
+        On Error GoTo 0
+    End If
+
+    If mPending = 0 And Len(mAllCompleteCallback) > 0 Then
+        On Error Resume Next
+        Application.Run mAllCompleteCallback, Me
         On Error GoTo 0
     End If
 End Sub

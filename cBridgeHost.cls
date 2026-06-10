@@ -18,13 +18,27 @@ Option Explicit
 Public WithEvents b As ExcelBridge.Bridge
 Attribute b.VB_VarHelpID = -1
 
-Public Sub StartUp(URL As String)
-    Set b = New ExcelBridge.Bridge
-    b.AutoReconnect = True
-    b.MaxReconnectDelayMs = 15000
-    b.RaiseGenericOnMessage = False
-    b.HttpDefaultTimeoutMs = 30000
+' Create the COM object only. HTTP works from this point on;
+' no WebSocket connection is opened until StartWs is called.
+Public Sub EnsureObject()
+    If b Is Nothing Then
+        Set b = New ExcelBridge.Bridge
+        b.AutoReconnect = True
+        b.MaxReconnectDelayMs = 15000
+        b.RaiseGenericOnMessage = False
+        b.HttpDefaultTimeoutMs = 30000
+    End If
+End Sub
+
+' Start (or restart) the WebSocket loop on the SAME Bridge object so that
+' in-flight HTTP requests keep their event sink.
+Public Sub StartWs(URL As String)
+    EnsureObject
     b.Start URL
+End Sub
+
+Public Sub StartUp(URL As String)
+    StartWs URL
 End Sub
 
 Public Sub ShutDown()
@@ -152,23 +166,32 @@ Private Sub b_OnHttpResponse(ByVal requestId As String, ByVal statusCode As Long
 
     modBridge.RouteHttpResult requestId, r
 
-    Debug.Print "HTTP " & statusCode & " [" & requestId & "] " & ElapsedMs & "ms: " & Left$(body, 200)
+    ' Diagnostics are opt-in: with many parallel requests the per-response
+    ' sheet write + Debug.Print dominate the completion path.
+    If modBridge.gHttpVerbose Then
+        Debug.Print "HTTP " & statusCode & " [" & requestId & "] " & ElapsedMs & "ms: " & Left$(body, 200)
+        LogHttpToSheet requestId, statusCode, ElapsedMs, body
+    End If
+End Sub
 
+Private Sub LogHttpToSheet(requestId As String, ByVal statusCode As Long, _
+                           ByVal ElapsedMs As Long, body As String)
     On Error Resume Next
     Dim ws As Worksheet
     Set ws = ThisWorkbook.Sheets("HttpLog")
-    If Not ws Is Nothing Then
-        Application.enableEvents = False
-        Dim nextRow As Long
-        nextRow = ws.cells(ws.rows.count, 1).End(xlUp).Row + 1
-        If nextRow < 2 Then nextRow = 2
-        ws.cells(nextRow, 1).value = Now
-        ws.cells(nextRow, 2).value = requestId
-        ws.cells(nextRow, 3).value = statusCode
-        ws.cells(nextRow, 4).value = ElapsedMs
-        ws.cells(nextRow, 5).value = Left$(body, 32767)
-        Application.enableEvents = True
-    End If
+    If ws Is Nothing Then Exit Sub
+
+    Dim prevEvents As Boolean: prevEvents = Application.enableEvents
+    Application.enableEvents = False
+    Dim nextRow As Long
+    nextRow = ws.cells(ws.rows.count, 1).End(xlUp).Row + 1
+    If nextRow < 2 Then nextRow = 2
+    ws.cells(nextRow, 1).value = Now
+    ws.cells(nextRow, 2).value = requestId
+    ws.cells(nextRow, 3).value = statusCode
+    ws.cells(nextRow, 4).value = ElapsedMs
+    ws.cells(nextRow, 5).value = Left$(body, 32767)
+    Application.enableEvents = prevEvents
     On Error GoTo 0
 End Sub
 
@@ -183,7 +206,9 @@ Private Sub b_OnHttpError(ByVal requestId As String, ByVal Message As String, By
 
     modBridge.RouteHttpResult requestId, r
 
-    Debug.Print "HTTP ERROR [" & requestId & "] " & ElapsedMs & "ms: " & Message
+    If modBridge.gHttpVerbose Then
+        Debug.Print "HTTP ERROR [" & requestId & "] " & ElapsedMs & "ms: " & Message
+    End If
 End Sub
 
 
@@ -204,32 +229,37 @@ End Sub
 Private Function SplitJsonStrings(ByVal s As String) As String()
     Dim out() As String: ReDim out(0 To 63)
     Dim n As Long: n = 0
+    Dim sLen As Long: sLen = Len(s)
     Dim i As Long, ch As String, nxt As String
-    Dim inStr_ As Boolean, buf As String
-    buf = ""
+    Dim inStr_ As Boolean
+    ' Fixed-size scratch buffer written via Mid$ assignment: appending with
+    ' "buf = buf & ch" reallocates the string per character (O(len^2)).
+    Dim buf As String: buf = Space$(sLen)
+    Dim bufN As Long: bufN = 0
     i = 1
-    Do While i <= Len(s)
+    Do While i <= sLen
         ch = mid$(s, i, 1)
         If inStr_ Then
-            If ch = "\" And i < Len(s) Then
+            If ch = "\" And i < sLen Then
                 nxt = mid$(s, i + 1, 1)
                 Select Case nxt
-                    Case """": buf = buf & """": i = i + 1
-                    Case "\":  buf = buf & "\":  i = i + 1
-                    Case "/":  buf = buf & "/":  i = i + 1
-                    Case "n":  buf = buf & vbLf: i = i + 1
-                    Case "r":  buf = buf & vbCr: i = i + 1
-                    Case "t":  buf = buf & vbTab: i = i + 1
-                    Case Else: buf = buf & ch
+                    Case """": bufN = bufN + 1: mid$(buf, bufN, 1) = """": i = i + 1
+                    Case "\":  bufN = bufN + 1: mid$(buf, bufN, 1) = "\":  i = i + 1
+                    Case "/":  bufN = bufN + 1: mid$(buf, bufN, 1) = "/":  i = i + 1
+                    Case "n":  bufN = bufN + 1: mid$(buf, bufN, 1) = vbLf: i = i + 1
+                    Case "r":  bufN = bufN + 1: mid$(buf, bufN, 1) = vbCr: i = i + 1
+                    Case "t":  bufN = bufN + 1: mid$(buf, bufN, 1) = vbTab: i = i + 1
+                    Case Else: bufN = bufN + 1: mid$(buf, bufN, 1) = ch
                 End Select
             ElseIf ch = """" Then
                 If n > UBound(out) Then ReDim Preserve out(0 To (n + 1) * 2)
-                out(n) = buf
+                out(n) = Left$(buf, bufN)
                 n = n + 1
-                buf = ""
+                bufN = 0
                 inStr_ = False
             Else
-                buf = buf & ch
+                bufN = bufN + 1
+                mid$(buf, bufN, 1) = ch
             End If
         ElseIf ch = """" Then
             inStr_ = True

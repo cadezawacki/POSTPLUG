@@ -15,7 +15,7 @@ Option Explicit
 '  Blocking (returns cHttpResponse record; blocks VBA only):
 '
 '      Dim r As cHttpResponse
-'      r = HttpGetSync("https://api.example.com/users/42")
+'      Set r = HttpGetSync("https://api.example.com/users/42")
 '      If r.Status = 200 Then Debug.Print r.Body
 '
 '  Custom headers (one per line):
@@ -64,7 +64,9 @@ End Function
 
 Public Function HttpSendFF(method As String, URL As String, body As String, _
                            headers As String, timeoutMs As Long) As String
-    modBridge.EnsureBridge
+    ' EnsureHttp, not EnsureBridge: REST calls must work with no WebSocket
+    ' connected and must never trigger a socket (re)connect.
+    modBridge.EnsureHttp
     HttpSendFF = modBridge.gHost.b.HttpSendAsync(method, URL, body, headers, timeoutMs)
 End Function
 
@@ -110,7 +112,7 @@ Public Function HttpRequestSync(method As String, URL As String, body As String,
     Dim r As cHttpResponse
     Set r = New cHttpResponse
 
-    modBridge.EnsureBridge
+    modBridge.EnsureHttp
     If modBridge.gHost Is Nothing Then
         r.ErrorMsg = "Bridge not started"
         Set HttpRequestSync = r
