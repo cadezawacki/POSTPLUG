@@ -42,6 +42,7 @@ End Sub
 Public Sub bridge_stop()
     modBridge.StopBridge
     modBridge.StopHeartbeat
+    modBridge.DetachBridge   ' stop XLL callbacks into this workbook
     IntersectionObserver.UnregisterAll
 End Sub
 

@@ -6,81 +6,21 @@ using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.WebSockets;
-using System.Runtime.InteropServices;
 using System.Text;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-[assembly: Guid("5B1C2E77-6A1D-4C9E-9E7A-7C4F0C1A1000")]
-[assembly: ComVisible(true)]
-
 namespace ExcelBridge
 {
     // =========================================================
-    //  COM event interface (source interface for VBA WithEvents)
+    //  Host-agnostic core: async HTTP client + WebSocket loop +
+    //  batch buffering. Exposed to Excel via BridgeApi (XLL);
+    //  events fire on worker threads and subscribers must only
+    //  enqueue (never block) — see VbaDispatcher.
     // =========================================================
-    [ComVisible(true)]
-    [Guid("5B1C2E77-6A1D-4C9E-9E7A-7C4F0C1A1001")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
-    public interface IBridgeEvents
-    {
-        [DispId(1)]  void OnCellUpdate(int row, int col, string value);
-        [DispId(2)]  void OnCellBatch(object cells);
-        [DispId(3)]  void OnFullGrid(string jsonGrid);
-        [DispId(4)]  void OnConnected();
-        [DispId(5)]  void OnDisconnected(string reason);
-        [DispId(6)]  void OnReconnecting(int attempt, int delayMs);
-        [DispId(7)]  void OnError(string message);
-        [DispId(8)]  void OnLog(string level, string message);
-        [DispId(9)]  void OnMessage(string msgType, string jsonPayload);
-        [DispId(10)] void OnHttpResponse(string requestId, int statusCode, string body, string headersJson, int elapsedMs);
-        [DispId(11)] void OnHttpError(string requestId, string message, int elapsedMs);
-        [DispId(12)] void OnMessageBatch(string jsonArray);
-    }
-
-    // =========================================================
-    //  COM method interface
-    // =========================================================
-    [ComVisible(true)]
-    [Guid("5B1C2E77-6A1D-4C9E-9E7A-7C4F0C1A1002")]
-    public interface IBridge
-    {
-        // WebSocket
-        [DispId(1)] void   Start(string url);
-        [DispId(2)] void   Stop();
-        [DispId(3)] void   PushCell(int row, int col, string value);
-        [DispId(4)] void   PushCells(object cells);
-        [DispId(5)] void   Send(string msgType, string jsonPayload);
-        [DispId(6)] bool   IsConnected { get; }
-        [DispId(7)] bool   AutoReconnect { get; set; }
-        [DispId(8)] int    MaxReconnectDelayMs { get; set; }
-        [DispId(9)] bool   RaiseGenericOnMessage { get; set; }
-
-        // HTTP
-        [DispId(10)] string HttpSendAsync(string method, string url, string body, string headers, int timeoutMs);
-        [DispId(11)] object HttpSendSync(string method, string url, string body, string headers, int timeoutMs);
-        [DispId(12)] void   HttpCancel(string requestId);
-        [DispId(13)] int    HttpDefaultTimeoutMs { get; set; }
-
-        // Batch buffering
-        [DispId(14)] int    BatchWindowMs { get; set; }
-        [DispId(15)] int    BatchMaxCount { get; set; }
-
-        // State
-        [DispId(16)] bool   IsRunning { get; }
-    }
-
-    // =========================================================
-    //  Implementation
-    // =========================================================
-    [ComVisible(true)]
-    [Guid("5B1C2E77-6A1D-4C9E-9E7A-7C4F0C1A1003")]
-    [ClassInterface(ClassInterfaceType.None)]
-    [ComSourceInterfaces(typeof(IBridgeEvents))]
-    [ProgId("ExcelBridge.Bridge")]
-    public class Bridge : IBridge
+    internal sealed class BridgeEngine
     {
         // ---------- Event delegates ----------
         public delegate void CellUpdateHandler(int row, int col, string value);
@@ -184,7 +124,7 @@ namespace ExcelBridge
         // =====================================================
         //  Constructor — wire up message dispatch table
         // =====================================================
-        public Bridge()
+        public BridgeEngine()
         {
             _handlers = new Dictionary<string, Action<JObject>>(StringComparer.OrdinalIgnoreCase)
 			{
@@ -802,29 +742,16 @@ namespace ExcelBridge
         // =====================================================
         //  Raise helpers
         // =====================================================
-        private const uint RPC_E_CALL_REJECTED        = 0x80010001;
-        private const uint RPC_E_SERVERCALL_RETRYLATER = 0x8001010A;
-
         private void Raise(Action a)
         {
-            // Events are raised from worker threads into Excel's STA. While the
-            // user is editing a cell or a dialog is open, Excel rejects incoming
-            // COM calls; swallowing that would silently drop the event (e.g. an
-            // HTTP completion, hanging any batch waiting on it). Retry instead.
-            for (int attempt = 0; ; attempt++)
+            // Subscribers only enqueue onto the main-thread dispatcher, so this
+            // never blocks and never crosses into Excel directly. (The old COM
+            // build had to retry RPC_E_CALL_REJECTED here; QueueAsMacro delivery
+            // makes that whole failure mode impossible.)
+            try { a(); }
+            catch (Exception ex)
             {
-                try { a(); return; }
-                catch (COMException ex) when (attempt < 10 &&
-                    ((uint)ex.HResult == RPC_E_CALL_REJECTED ||
-                     (uint)ex.HResult == RPC_E_SERVERCALL_RETRYLATER))
-                {
-                    Thread.Sleep(50 * (attempt + 1));
-                }
-                catch (Exception ex)
-                {
-                    try { OnLog?.Invoke("error", "handler threw: " + ex.Message); } catch { }
-                    return;
-                }
+                try { OnLog?.Invoke("error", "handler threw: " + ex.Message); } catch { }
             }
         }
 

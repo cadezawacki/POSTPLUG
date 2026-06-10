@@ -4,13 +4,23 @@ Attribute VB_Name = "modBridge"
 Option Explicit
 
 ' ============================================================
-'  lifecycle + helpers for the WebSocket bridge
+'  Lifecycle + helpers for the ExcelBridge XLL add-in.
+'
+'  HTTP and WS are independent:
+'    EnsureHttp   - loads/attaches the XLL only (async REST ready,
+'                   no socket is ever opened by this path)
+'    StartBridge  - additionally starts the WebSocket feed
 ' ============================================================
 
-Public gHost As cBridgeHost
 Public gSuspendEvents As Boolean
 Public gHttpVerbose As Boolean   ' opt-in: Debug.Print + HttpLog sheet per HTTP completion
 Private gBatchRouter As Object   ' Scripting.Dictionary
+Private gAttached As Boolean     ' EB_Attach done for this workbook
+
+Private Const HTTP_DEFAULT_TIMEOUT_MS As Long = 30000
+Private Const WS_MAX_RECONNECT_DELAY_MS As Long = 15000
+Private Const WS_BATCH_WINDOW_MS As Long = 16
+Private Const WS_BATCH_MAX_COUNT As Long = 200
 
 ' Heartbeat / keep-alive timer
 Private gHeartbeatCallback As String    ' fully-qualified "Module.Sub" to call
@@ -24,68 +34,136 @@ Private gHeartbeatActive As Boolean     ' is the timer running?
     Public Declare Sub Sleep Lib "kernel32" (ByVal dwMilliseconds As Long)
 #End If
 
+' ============================================================
+'  ADD-IN LIFECYCLE
+' ============================================================
+
+' True if the ExcelBridge XLL is loaded in this Excel session.
+Public Function AddinLoaded() As Boolean
+    On Error Resume Next
+    Dim v As Variant
+    v = Application.Run("EB_Version")
+    AddinLoaded = (Err.Number = 0)
+    If AddinLoaded Then AddinLoaded = Not IsError(v)
+    On Error GoTo 0
+End Function
+
+' Load the XLL if it isn't already. Looks for an explicit path in the
+' 'BridgeXllPath' named range first, then next to the workbook.
+Public Sub EnsureAddin()
+    If AddinLoaded() Then Exit Sub
+
+    Dim candidates(0 To 2) As String
+    Dim n As Long: n = 0
+
+    Dim configured As String
+    configured = ConfiguredXllPath()
+    If Len(configured) > 0 Then candidates(n) = configured: n = n + 1
+
+    Dim base As String
+    base = ThisWorkbook.Path & Application.PathSeparator
+    #If Win64 Then
+        candidates(n) = base & "ExcelBridge-AddIn64.xll": n = n + 1
+        candidates(n) = base & "ExcelBridge-AddIn64-packed.xll": n = n + 1
+    #Else
+        candidates(n) = base & "ExcelBridge-AddIn.xll": n = n + 1
+        candidates(n) = base & "ExcelBridge-AddIn-packed.xll": n = n + 1
+    #End If
+
+    Dim i As Long
+    For i = 0 To n - 1
+        If Len(candidates(i)) > 0 Then
+            If Len(Dir$(candidates(i))) > 0 Then
+                If Application.RegisterXLL(candidates(i)) Then Exit For
+            End If
+        End If
+    Next i
+
+    If Not AddinLoaded() Then
+        Err.Raise vbObjectError + 513, "modBridge.EnsureAddin", _
+            "ExcelBridge add-in is not loaded. Place the XLL next to the workbook " & _
+            "or set its full path in the 'BridgeXllPath' named range."
+    End If
+End Sub
+
+Private Function ConfiguredXllPath() As String
+    On Error Resume Next
+    ConfiguredXllPath = CStr(ThisWorkbook.Names("BridgeXllPath").RefersToRange.Value2)
+    On Error GoTo 0
+End Function
+
+' HTTP-only entry point: loads the XLL and attaches this workbook as the
+' callback target. Never opens (or restarts) a WebSocket.
+Public Sub EnsureHttp()
+    EnsureAddin
+    If Not gAttached Then
+        Application.Run "EB_Attach", ThisWorkbook.name
+        Application.Run "EB_HttpSetDefaultTimeout", HTTP_DEFAULT_TIMEOUT_MS
+        gAttached = True
+    End If
+End Sub
+
+' Stop callbacks into this workbook (call before close).
+Public Sub DetachBridge()
+    gAttached = False
+    If Not AddinLoaded() Then Exit Sub
+    On Error Resume Next
+    Application.Run "EB_Detach"
+    On Error GoTo 0
+End Sub
+
+' ============================================================
+'  WEBSOCKET LIFECYCLE
+' ============================================================
 
 Public Sub StartBridge()
-    ' Initialize message router only if it hasn't been already: StartBridge is
-    ' re-entered by EnsureBridge restarts, and InitRouter would wipe every
-    ' registered route (messages then silently fall through to nothing).
+    ' Idempotent router init: a restart must not wipe registered routes.
     modSocketRouter.EnsureRouter
-    'modSocketRouter.RouteDefault "modBridge.HandleUnknown"
 
     ' Configure heartbeat (fires SendPing every X seconds while connected)
     SetHeartbeat "modBridge.SendPing", 30
 
-    If gHost Is Nothing Then
-        Set gHost = New cBridgeHost
-    End If
-    gHost.StartWs BridgeWsUrl()
-
+    EnsureHttp
+    Application.Run "EB_WsConfig", True, WS_MAX_RECONNECT_DELAY_MS, False, _
+                    WS_BATCH_WINDOW_MS, WS_BATCH_MAX_COUNT
+    Application.Run "EB_WsStart", BridgeWsUrl()
 End Sub
 
 Private Function BridgeWsUrl() As String
     BridgeWsUrl = "ws://cds-sn-api-dev.sik.intranet.barcapint.com/ws/cds?username=" & User_GetUserName()
 End Function
 
-' HTTP-only entry point: creates the Bridge COM object WITHOUT opening a
-' WebSocket. REST calls must never force (or restart) a socket connection.
-Public Sub EnsureHttp()
-    If gHost Is Nothing Then Set gHost = New cBridgeHost
-    gHost.EnsureObject
-End Sub
-
 Public Sub StopBridge()
-    If Not gHost Is Nothing Then gHost.ShutDown
-    Set gHost = Nothing
+    If Not AddinLoaded() Then Exit Sub
+    On Error Resume Next
+    Application.Run "EB_WsStop"
+    On Error GoTo 0
 End Sub
 
 Public Sub EnsureBridge()
-    ' Restart bridge only if truly dead (not just mid-reconnect).
-    ' Never discard gHost here: throwing the host away orphans the event sink
-    ' for every in-flight HTTP request (their completions would be raised on
-    ' the old, unreferenced Bridge and lost). Restart the WS loop in place.
-    If gHost Is Nothing Then
+    ' Restart the WS only if the loop has exited entirely; while it is
+    ' running (connected OR mid-reconnect) leave it alone.
+    EnsureHttp
+    If Not CBool(Application.Run("EB_WsIsRunning")) Then
         StartBridge
-    ElseIf gHost.b Is Nothing Then
-        StartBridge
-    ElseIf Not gHost.b.IsRunning Then
-        ' WS loop has exited entirely - restart it on the same Bridge object
-        gHost.StartWs BridgeWsUrl()
     End If
-    ' If IsRunning=True but IsConnected=False, it's reconnecting - leave it alone
 End Sub
 
 ' ---- Example extensibility: pure-VBA commands (no DLL rebuild) ----
 
 Public Sub SendPing()
-    modBridge.EnsureBridge
-    If gHost Is Nothing Then Exit Sub
-    gHost.b.Send "ping", ""
+    EnsureBridge
+    Application.Run "EB_WsSend", "ping", ""
 End Sub
 
 Public Sub SendClear()
-    If gHost Is Nothing Then Exit Sub
-    gHost.b.Send "clear", ""
+    If Not AddinLoaded() Then Exit Sub
+    Application.Run "EB_WsSend", "clear", ""
 End Sub
+
+' ============================================================
+'  HTTP BATCH ROUTING
+' ============================================================
 
 Public Sub RegisterBatch(requestId As String, batch As cHttpBatch)
     If gBatchRouter Is Nothing Then Set gBatchRouter = CreateObject("Scripting.Dictionary")
@@ -140,20 +218,18 @@ Public Sub StopHeartbeat()
 End Sub
 
 Public Sub HeartbeatTick()
-    ' Fired by Application.OnTime � runs async on Excel's idle loop
+    ' Fired by Application.OnTime - runs async on Excel's idle loop
     If Not gHeartbeatActive Then Exit Sub
     If gHeartbeatSeconds <= 0 Then Exit Sub
 
     ' Only fire if connected
-    If Not gHost Is Nothing Then
-        If Not gHost.b Is Nothing Then
-            If gHost.b.IsConnected Then
-                On Error Resume Next
-                Application.Run gHeartbeatCallback
-                On Error GoTo 0
-            End If
+    On Error Resume Next
+    If AddinLoaded() Then
+        If CBool(Application.Run("EB_WsIsConnected")) Then
+            Application.Run gHeartbeatCallback
         End If
     End If
+    On Error GoTo 0
 
     ' Schedule next tick
     If gHeartbeatActive Then
@@ -181,7 +257,3 @@ End Sub
 Public Sub HandleUnknown(msgType As String, jsonPayload As String)
     Debug.Print "unhandled [" & msgType & "]: " & Left$(jsonPayload, 200)
 End Sub
-
-
-
-

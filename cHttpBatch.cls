@@ -84,7 +84,7 @@ Public Function WaitAll(Optional overallTimeoutMs As Long = 0) As Boolean
     startTick = Timer
 
     Do While mPending > 0
-        DoEvents   ' let COM events deliver OnHttpResponse / OnHttpError into cBridgeHost
+        DoEvents   ' pump messages so the XLL's queued macros can deliver EB_OnHttpBatch
         Sleep 5    ' tiny yield so we're not burning 100% CPU
 
         If overallTimeoutMs > 0 Then

@@ -4,8 +4,10 @@ Attribute VB_Name = "modHttp"
 Option Explicit
 
 ' ============================================================
+'  Async HTTP via the ExcelBridge XLL. No WebSocket required.
+'
 '  Fire-and-forget  (returns requestId immediately, response
-'  comes via cBridgeHost.b_OncHttpResponse / b_OnHttpError):
+'  arrives via modBridgeEvents.EB_OnHttpBatch on the main thread):
 '
 '      Dim id As String
 '      id = HttpGet("https://api.example.com/users/42")
@@ -20,7 +22,7 @@ Option Explicit
 '
 '  Custom headers (one per line):
 '
-'      r = HttpRequestSync("POST", url, jsonBody, _
+'      Set r = HttpRequestSync("POST", url, jsonBody, _
 '          "Authorization: Bearer abc" & vbLf & _
 '          "X-Trace-Id: 42")
 '
@@ -29,6 +31,9 @@ Option Explicit
 '      HttpCancel id
 ' ============================================================
 
+' Excel's evaluator caps VBA -> XLL string arguments at 32,767 chars;
+' bodies above this are staged into the add-in in chunks.
+Private Const CHUNK_MAX As Long = 30000
 
 ' ---------- Fire-and-forget ----------
 
@@ -64,15 +69,20 @@ End Function
 
 Public Function HttpSendFF(method As String, URL As String, body As String, _
                            headers As String, timeoutMs As Long) As String
-    ' EnsureHttp, not EnsureBridge: REST calls must work with no WebSocket
-    ' connected and must never trigger a socket (re)connect.
+    ' EnsureHttp loads/attaches the XLL only - it never opens a WebSocket.
     modBridge.EnsureHttp
-    HttpSendFF = modBridge.gHost.b.HttpSendAsync(method, URL, body, headers, timeoutMs)
+    If Len(body) > CHUNK_MAX Then
+        HttpSendFF = Application.Run("EB_HttpSendAsyncBody", method, URL, _
+                                     StageBody(body), headers, timeoutMs)
+    Else
+        HttpSendFF = Application.Run("EB_HttpSendAsync", method, URL, _
+                                     body, headers, timeoutMs)
+    End If
 End Function
 
 Public Sub HttpCancel(requestId As String)
-    If modBridge.gHost Is Nothing Then Exit Sub
-    modBridge.gHost.b.HttpCancel requestId
+    If Not modBridge.AddinLoaded() Then Exit Sub
+    Application.Run "EB_HttpCancel", requestId
 End Sub
 
 ' ---------- Blocking ----------
@@ -112,22 +122,34 @@ Public Function HttpRequestSync(method As String, URL As String, body As String,
     Dim r As cHttpResponse
     Set r = New cHttpResponse
 
+    On Error GoTo fail
     modBridge.EnsureHttp
-    If modBridge.gHost Is Nothing Then
-        r.ErrorMsg = "Bridge not started"
-        Set HttpRequestSync = r
-        Exit Function
+
+    ' Result row: { status, inlineBody, headersJson, elapsedMs, error, bodyToken, bodyLength }
+    Dim result As Variant
+    If Len(body) > CHUNK_MAX Then
+        result = Application.Run("EB_HttpSendSyncBody", method, URL, _
+                                 StageBody(body), headers, timeoutMs)
+    Else
+        result = Application.Run("EB_HttpSendSync", method, URL, _
+                                 body, headers, timeoutMs)
     End If
 
-    Dim result As Variant
-    On Error GoTo fail
-    result = modBridge.gHost.b.HttpSendSync(method, URL, body, headers, timeoutMs)
+    Dim v() As Variant
+    v = NormalizeRow(result)
 
-    r.Status = CLng(result(0))
-    r.body = CStr(result(1))
-    r.headersJson = CStr(result(2))
-    r.ElapsedMs = CLng(result(3))
-    r.ErrorMsg = CStr(result(4))
+    r.Status = CLng(v(0))
+    r.body = CStr(v(1))
+    r.headersJson = CStr(v(2))
+    r.ElapsedMs = CLng(v(3))
+    r.ErrorMsg = CStr(v(4))
+
+    ' Bodies too large to return inline are fetched in chunks
+    Dim bodyToken As String: bodyToken = CStr(v(5))
+    If Len(bodyToken) > 0 Then
+        r.body = FetchResult(bodyToken, CLng(v(6)))
+    End If
+
     Set HttpRequestSync = r
     Exit Function
 fail:
@@ -135,8 +157,69 @@ fail:
     Set HttpRequestSync = r
 End Function
 
+' ---------- Internal helpers ----------
 
+' Stage a large request body into the add-in, CHUNK_MAX chars at a time.
+Private Function StageBody(body As String) As String
+    Dim token As String
+    token = Application.Run("EB_BodyBegin")
 
+    Dim p As Long: p = 1
+    Do While p <= Len(body)
+        Application.Run "EB_BodyAppend", token, mid$(body, p, CHUNK_MAX)
+        p = p + CHUNK_MAX
+    Loop
+    StageBody = token
+End Function
 
+' Fetch a large sync-response body from the add-in chunk store.
+Private Function FetchResult(token As String, totalLen As Long) As String
+    If totalLen <= 0 Then
+        Application.Run "EB_ResultRelease", token
+        Exit Function
+    End If
 
+    Dim buf As String: buf = Space$(totalLen)
+    Dim pos As Long: pos = 1
+    Dim idx As Long: idx = 0
+    Dim chunk As String
 
+    Do While pos <= totalLen
+        chunk = Application.Run("EB_ResultChunk", token, idx)
+        If Len(chunk) = 0 Then Exit Do
+        mid$(buf, pos, Len(chunk)) = chunk
+        pos = pos + Len(chunk)
+        idx = idx + 1
+    Loop
+
+    Application.Run "EB_ResultRelease", token
+    FetchResult = Left$(buf, pos - 1)
+End Function
+
+' Application.Run may hand back the XLL result row as a 1-D array (any base)
+' or a 2-D single-row array depending on marshaling. Normalize to 0-based 1-D.
+Private Function NormalizeRow(ByVal result As Variant) As Variant()
+    Dim out() As Variant
+    Dim n As Long, i As Long
+
+    Dim ub2 As Long: ub2 = -2147483647
+    On Error Resume Next
+    ub2 = UBound(result, 2)
+    On Error GoTo 0
+
+    If ub2 <> -2147483647 Then
+        ' 2-D single row
+        n = ub2 - LBound(result, 2) + 1
+        ReDim out(0 To n - 1)
+        For i = 0 To n - 1
+            out(i) = result(LBound(result, 1), LBound(result, 2) + i)
+        Next i
+    Else
+        n = UBound(result) - LBound(result) + 1
+        ReDim out(0 To n - 1)
+        For i = 0 To n - 1
+            out(i) = result(LBound(result) + i)
+        Next i
+    End If
+    NormalizeRow = out
+End Function

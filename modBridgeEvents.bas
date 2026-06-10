@@ -1,68 +1,74 @@
 
-VERSION 1.0 CLASS
-BEGIN
-  MultiUse = -1  'True
-END
-Attribute VB_Name = "cBridgeHost"
-Attribute VB_GlobalNameSpace = False
-Attribute VB_Creatable = False
-Attribute VB_PredeclaredId = False
-Attribute VB_Exposed = False
+Attribute VB_Name = "modBridgeEvents"
+
 Option Explicit
 
 ' ============================================================
-'  cBridgeHost: hosts the ExcelBridge.Bridge COM object and
-'  receives its events via WithEvents.
+'  Sinks invoked BY the ExcelBridge XLL via Application.Run,
+'  always on Excel's main thread (QueueAsMacro delivery).
+'
+'  The sub names and signatures below are a fixed contract with
+'  the add-in (see VbaDispatcher in ExcelInterface.cs) - do not
+'  rename them. This module replaces the old cBridgeHost class
+'  (COM WithEvents sink).
 ' ============================================================
 
-Public WithEvents b As ExcelBridge.Bridge
-Attribute b.VB_VarHelpID = -1
+' ============================================================
+'  HTTP: batched completions
+'  rows = { requestId, status, body, headersJson, elapsedMs, errorMsg }
+' ============================================================
 
-' Create the COM object only. HTTP works from this point on;
-' no WebSocket connection is opened until StartWs is called.
-Public Sub EnsureObject()
-    If b Is Nothing Then
-        Set b = New ExcelBridge.Bridge
-        b.AutoReconnect = True
-        b.MaxReconnectDelayMs = 15000
-        b.RaiseGenericOnMessage = False
-        b.HttpDefaultTimeoutMs = 30000
-    End If
-End Sub
+Public Sub EB_OnHttpBatch(ByVal results As Variant)
+    Dim rLo As Long: rLo = LBound(results, 1)
+    Dim rHi As Long: rHi = UBound(results, 1)
+    Dim c As Long: c = LBound(results, 2)
 
-' Start (or restart) the WebSocket loop on the SAME Bridge object so that
-' in-flight HTTP requests keep their event sink.
-Public Sub StartWs(URL As String)
-    EnsureObject
-    b.Start URL
-End Sub
+    Dim i As Long
+    Dim requestId As String
+    Dim resp As cHttpResponse
 
-Public Sub StartUp(URL As String)
-    StartWs URL
-End Sub
+    For i = rLo To rHi
+        Set resp = New cHttpResponse
+        requestId = CStr(results(i, c))
+        resp.Status = CLng(results(i, c + 1))
+        resp.body = CStr(results(i, c + 2))
+        resp.headersJson = CStr(results(i, c + 3))
+        resp.ElapsedMs = CLng(results(i, c + 4))
+        resp.ErrorMsg = CStr(results(i, c + 5))
 
-Public Sub ShutDown()
-    On Error Resume Next
-    If Not b Is Nothing Then b.Stop
-    Set b = Nothing
-    On Error GoTo 0
-End Sub
+        modBridge.RouteHttpResult requestId, resp
 
-Public Sub Push(r As Long, c As Long, v As String)
-    If b Is Nothing Then Exit Sub
-    b.PushCell r - 1, c - 1, v
-End Sub
-
-Public Sub PushBatch(arr As Variant)
-    If b Is Nothing Then Exit Sub
-    b.PushCells arr
+        ' Diagnostics are opt-in: with many parallel requests the per-response
+        ' sheet write + Debug.Print dominate the completion path.
+        If modBridge.gHttpVerbose Then
+            If Len(resp.ErrorMsg) > 0 Then
+                Debug.Print "HTTP ERROR [" & requestId & "] " & resp.ElapsedMs & "ms: " & resp.ErrorMsg
+            Else
+                Debug.Print "HTTP " & resp.Status & " [" & requestId & "] " & _
+                            resp.ElapsedMs & "ms: " & Left$(resp.body, 200)
+                LogHttpToSheet requestId, resp.Status, resp.ElapsedMs, resp.body
+            End If
+        End If
+    Next i
 End Sub
 
 ' ============================================================
-'  Typed WebSocket events
+'  WebSocket: routed messages
 ' ============================================================
 
-Private Sub b_OnCellUpdate(ByVal r As Long, ByVal c As Long, ByVal v As String)
+Public Sub EB_OnMessage(ByVal msgType As String, ByVal jsonPayload As String)
+    modSocketRouter.RouteMessage msgType, jsonPayload
+End Sub
+
+Public Sub EB_OnMessageBatch(ByVal jsonArray As String)
+    modSocketRouter.RouteBatch jsonArray
+End Sub
+
+' ============================================================
+'  WebSocket: typed grid events
+' ============================================================
+
+Public Sub EB_OnCellUpdate(ByVal r As Long, ByVal c As Long, ByVal v As String)
     On Error GoTo cleanup
     gSuspendEvents = True
     ThisWorkbook.Sheets("Grid").cells(r + 1, c + 1).value = v
@@ -70,19 +76,21 @@ cleanup:
     gSuspendEvents = False
 End Sub
 
-Private Sub b_OnCellBatch(ByVal cells As Variant)
+Public Sub EB_OnCellBatch(ByVal cells As Variant)
     On Error GoTo cleanup
     gSuspendEvents = True
     Dim ws As Worksheet: Set ws = ThisWorkbook.Sheets("Grid")
+    Dim rLo As Long: rLo = LBound(cells, 1)
+    Dim cLo As Long: cLo = LBound(cells, 2)
     Dim i As Long
-    For i = 0 To UBound(cells, 1)
-        ws.cells(CLng(cells(i, 0)) + 1, CLng(cells(i, 1)) + 1).value = cells(i, 2)
+    For i = rLo To UBound(cells, 1)
+        ws.cells(CLng(cells(i, cLo)) + 1, CLng(cells(i, cLo + 1)) + 1).value = cells(i, cLo + 2)
     Next i
 cleanup:
     gSuspendEvents = False
 End Sub
 
-Private Sub b_OnFullGrid(ByVal jsonGrid As String)
+Public Sub EB_OnFullGrid(ByVal jsonGrid As String)
     On Error GoTo cleanup
     gSuspendEvents = True
 
@@ -121,57 +129,29 @@ End Sub
 '  Status / diagnostics
 ' ============================================================
 
-Private Sub b_OnConnected()
-    SetStatus "connected"
+Public Sub EB_OnWsStatus(ByVal state As String, ByVal detail As String)
+    If Len(detail) > 0 Then
+        SetStatus state & ": " & detail
+    Else
+        SetStatus state
+    End If
 End Sub
 
-Private Sub b_OnDisconnected(ByVal reason As String)
-    SetStatus "disconnected: " & reason
-End Sub
-
-Private Sub b_OnReconnecting(ByVal attempt As Long, ByVal delayMs As Long)
-    SetStatus "reconnecting (#" & attempt & ", " & delayMs & "ms)"
-End Sub
-
-Private Sub b_OnError(ByVal Message As String)
-    Debug.Print "Bridge error: " & Message
-End Sub
-
-Private Sub b_OnLog(ByVal level As String, ByVal Message As String)
+Public Sub EB_OnLog(ByVal level As String, ByVal Message As String)
     Debug.Print "[" & level & "] " & Message
 End Sub
 
-Private Sub b_OnMessage(ByVal msgType As String, ByVal jsonPayload As String)
-    modSocketRouter.RouteMessage msgType, jsonPayload
-End Sub
-
-Private Sub b_OnMessageBatch(ByVal jsonArray As String)
-    modSocketRouter.RouteBatch jsonArray
-End Sub
-
 ' ============================================================
-'  HTTP events: fire-and-forget completions land here
+'  Helpers
 ' ============================================================
 
-Private Sub b_OnHttpResponse(ByVal requestId As String, ByVal statusCode As Long, _
-                             ByVal body As String, ByVal headersJson As String, _
-                             ByVal ElapsedMs As Long)
-    Dim r As cHttpResponse
-    Set r = New cHttpResponse
-    r.Status = statusCode
-    r.body = body
-    r.headersJson = headersJson
-    r.ElapsedMs = ElapsedMs
-    r.ErrorMsg = ""
-
-    modBridge.RouteHttpResult requestId, r
-
-    ' Diagnostics are opt-in: with many parallel requests the per-response
-    ' sheet write + Debug.Print dominate the completion path.
-    If modBridge.gHttpVerbose Then
-        Debug.Print "HTTP " & statusCode & " [" & requestId & "] " & ElapsedMs & "ms: " & Left$(body, 200)
-        LogHttpToSheet requestId, statusCode, ElapsedMs, body
-    End If
+Private Sub SetStatus(s As String)
+    On Error Resume Next
+    Dim prevEvents As Boolean: prevEvents = Application.enableEvents
+    Application.enableEvents = False
+    ThisWorkbook.Sheets("Grid").Range("G1").value = s
+    Application.enableEvents = prevEvents
+    On Error GoTo 0
 End Sub
 
 Private Sub LogHttpToSheet(requestId As String, ByVal statusCode As Long, _
@@ -192,35 +172,6 @@ Private Sub LogHttpToSheet(requestId As String, ByVal statusCode As Long, _
     ws.cells(nextRow, 4).value = ElapsedMs
     ws.cells(nextRow, 5).value = Left$(body, 32767)
     Application.enableEvents = prevEvents
-    On Error GoTo 0
-End Sub
-
-Private Sub b_OnHttpError(ByVal requestId As String, ByVal Message As String, ByVal ElapsedMs As Long)
-    Dim r As cHttpResponse
-    Set r = New cHttpResponse
-    r.Status = 0
-    r.body = ""
-    r.headersJson = "{}"
-    r.ElapsedMs = ElapsedMs
-    r.ErrorMsg = Message
-
-    modBridge.RouteHttpResult requestId, r
-
-    If modBridge.gHttpVerbose Then
-        Debug.Print "HTTP ERROR [" & requestId & "] " & ElapsedMs & "ms: " & Message
-    End If
-End Sub
-
-
-' ============================================================
-'  Helpers
-' ============================================================
-
-Private Sub SetStatus(s As String)
-    On Error Resume Next
-    Application.enableEvents = False
-    ThisWorkbook.Sheets("Grid").Range("G1").value = s
-    Application.enableEvents = True
     On Error GoTo 0
 End Sub
 
@@ -273,9 +224,3 @@ Private Function SplitJsonStrings(ByVal s As String) As String()
     End If
     SplitJsonStrings = out
 End Function
-
-
-
-
-
-

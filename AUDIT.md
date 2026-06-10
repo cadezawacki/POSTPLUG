@@ -1,5 +1,13 @@
 # POSTPLUG Codebase Audit — Async HTTP/WS Bridge
 
+> **Update (v2.0):** the bridge has since been migrated from a registered COM
+> DLL (+tlb) to an Excel-DNA XLL — see `DEPLOYMENT.md`. This resolves the
+> architectural items below structurally: §1.1 (STA call rejection) is
+> eliminated by QueueAsMacro main-thread delivery, §4.2 (batched HTTP
+> completion events) is implemented by the dispatcher (`EB_OnHttpBatch`), and
+> §4.3 (COM surface) no longer applies. The engine-level findings and fixes
+> (Passes 1–3) all carry over into `BridgeEngine` unchanged.
+
 Scope: `Bridge.cs` (COM bridge), `modHttp.bas`, `modBridge.bas`, `cBridgeHost.cls`,
 `cHttpBatch.cls`, `cHttpResponse.cls`, `cHttpCallback.cls`, `modSocketRouter.bas`,
 `socket_filter.bas`, plus the HTTP-relevant parts of `cadesHelpers.bas` and the
