@@ -212,11 +212,13 @@ Each `Mid$(s, i, 1)` allocates a 1-char string. A `Byte()` array scan
 payloads exceed a few hundred KB; current message sizes don't justify the
 complexity.
 
-### 3.6 [NOTE] `cadesHelpers.HttpRequest` (WinHttp, synchronous) duplicates `modHttp`
-It blocks Excel's UI thread for the full request duration and divides timeout
-by 4 naively. Keep it for trivial one-offs if you like, but the parallel-POST
-use case must go through `modHttp`/`cHttpBatch`. Two HTTP stacks = two places
-for auth/proxy/timeout bugs; consider routing it through `HttpRequestSync`.
+### 3.6 [FIXED] `cadesHelpers.HttpRequest` (WinHttp, synchronous) removed
+It duplicated `modHttp`, blocked Excel's UI thread for the full request
+duration, and divided the timeout by 4 naively. Deprecated and deleted; it had
+no callers in the repo. All HTTP now goes through the single
+`modHttp`/`cHttpBatch` stack (use `HttpRequestSync` where a blocking call is
+genuinely needed). Its private helpers (`AsString`, `NewDictionary`,
+`JSON_Stringify`, `JSON_ToObject`) remain in use by other utilities.
 
 ---
 
