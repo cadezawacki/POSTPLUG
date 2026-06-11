@@ -40,6 +40,8 @@ Private mPending As Long            ' outstanding HTTP requests
 Private mDone As Boolean
 Private mLaunched As Boolean
 Private mFailedCount As Long
+Private mLaunchTick As Double       ' Timer at FinishLaunch
+Private mWallMs As Long             ' launch -> last delivery (wall clock)
 
 Public Sub Init(ByVal Action As String, Optional ByVal OnCurve As String = "", _
                 Optional ByVal OnAllDone As String = "")
@@ -90,6 +92,21 @@ Public Property Get CompletedCurves() As Long
         If Len(mCurves(k).Status) > 0 Then n = n + 1
     Next k
     CompletedCurves = n
+End Property
+
+' Wall-clock ms from FinishLaunch to the last delivery (0 until done).
+Public Property Get WallMs() As Long
+    WallMs = mWallMs
+End Property
+
+' Slowest server round trip in the batch (engine-measured, excludes any
+' delivery lag). WallMs >> MaxRequestMs means deliveries sat waiting in the
+' queue; WallMs ~ MaxRequestMs means delivery was immediate.
+Public Property Get MaxRequestMs() As Long
+    Dim k As Variant
+    For Each k In mCurves.Keys
+        If mCurves(k).ElapsedMs > MaxRequestMs Then MaxRequestMs = mCurves(k).ElapsedMs
+    Next k
 End Property
 
 Public Function Keys() As Variant
@@ -147,6 +164,7 @@ End Sub
 ' completes the batch immediately (all-done callback included).
 Public Sub FinishLaunch()
     mLaunched = True
+    mLaunchTick = Timer
     If mPending = 0 Then CompleteBatch
 End Sub
 
@@ -162,6 +180,7 @@ Public Sub OnHttpDone(RequestId As String, r As cHttpResponse)
     Dim transportError As String
 
     If Not mReqKeys.Exists(RequestId) Then Exit Sub
+    modCms.NoteDelivery
     curveKeys = mReqKeys(RequestId)
     mReqKeys.Remove RequestId
 
@@ -212,8 +231,14 @@ Public Sub OnHttpDone(RequestId As String, r As cHttpResponse)
 End Sub
 
 Private Sub CompleteBatch()
+    Dim elapsedSec As Double
     If mDone Then Exit Sub
     mDone = True
+    If mLaunchTick > 0 Then
+        elapsedSec = Timer - mLaunchTick
+        If elapsedSec < 0 Then elapsedSec = elapsedSec + 86400  ' Timer resets at midnight
+        mWallMs = CLng(elapsedSec * 1000)
+    End If
     ' Break the cCmsBatch <-> cHttpBatch reference cycle so both can be freed,
     ' and drop out of the active-batch registry (CMS_LastBatch keeps the most
     ' recent one reachable for inspection).

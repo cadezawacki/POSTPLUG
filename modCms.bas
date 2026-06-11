@@ -80,6 +80,8 @@ Private gLastBatch As cCmsBatch     ' most recently launched batch (kept after c
 
 Private gWatchdogOn As Boolean      ' OnTime delivery watchdog (armed while batches in flight)
 Private gWatchdogNextRun As Date
+Private gDeliveryCount As Long      ' total HTTP completions delivered into cCmsBatch
+Private gWatchdogFlushCount As Long ' deliveries that were STUCK until a watchdog tick flushed them
 
 ' =============================================================================
 '  CONFIGURATION
@@ -210,12 +212,38 @@ End Sub
 
 ' Fired by Application.OnTime - do not call directly.
 Public Sub CmsWatchdogTick()
+    Dim before As Long
     gWatchdogOn = False
     ' We are in a macro context now; DoEvents lets the bridge's queued
     ' EB_OnHttpBatch deliveries run if they were stuck waiting for one.
+    ' Deliveries landing inside THIS DoEvents were, by definition, waiting:
+    ' count them so CMS_Diag can show whether the watchdog is load-bearing.
+    ' (Slight over-attribution is possible if a tick fires inside someone
+    ' else's pump - fine for diagnostics.)
+    before = gDeliveryCount
     DoEvents
+    If gDeliveryCount > before Then
+        gWatchdogFlushCount = gWatchdogFlushCount + (gDeliveryCount - before)
+        Debug.Print "CMS watchdog " & Format$(Now, "hh:nn:ss") & ": flushed " & _
+                    (gDeliveryCount - before) & " stuck deliver(ies)"
+    End If
     If CMS_ActiveBatchCount() > 0 Then EnsureWatchdog
 End Sub
+
+' Called by cCmsBatch.OnHttpDone on every delivered completion.
+Public Sub NoteDelivery()
+    gDeliveryCount = gDeliveryCount + 1
+End Sub
+
+Public Function CMS_DeliveryCount() As Long
+    CMS_DeliveryCount = gDeliveryCount
+End Function
+
+' > 0 means deliveries in this session genuinely sat stuck until the
+' watchdog freed them (i.e. the SET-only stall was real, not user error).
+Public Function CMS_WatchdogFlushCount() As Long
+    CMS_WatchdogFlushCount = gWatchdogFlushCount
+End Function
 
 ' Cancel a pending watchdog tick. Call from Workbook_BeforeClose alongside
 ' bridge_stop so a scheduled OnTime cannot reopen the workbook after close.
@@ -236,7 +264,9 @@ Public Function CMS_Diag() As String
     s = "transport=" & gTransport & "; endpoint=" & gEndpointUrl & vbNewLine
     s = s & "bridge loaded=" & modBridge.AddinLoaded() & _
         "; last dispatch error=" & modBridge.BridgeLastDispatchError() & vbNewLine
-    s = s & "store curves=" & CMS_Store().Count & vbNewLine
+    s = s & "store curves=" & CMS_Store().Count & _
+        "; deliveries=" & gDeliveryCount & _
+        "; watchdog flushes=" & gWatchdogFlushCount & vbNewLine
     s = s & "active batches=" & CMS_ActiveBatchCount()
     If Not gActiveBatches Is Nothing Then
         For i = 1 To gActiveBatches.Count
@@ -249,7 +279,9 @@ Public Function CMS_Diag() As String
     If Not gLastBatch Is Nothing Then
         s = s & vbNewLine & "last batch: " & gLastBatch.Action & _
             " done=" & gLastBatch.IsDone & " curves=" & gLastBatch.Count & _
-            " failed=" & gLastBatch.FailedCount
+            " failed=" & gLastBatch.FailedCount & _
+            " wall=" & gLastBatch.WallMs & "ms slowest request=" & _
+            gLastBatch.MaxRequestMs & "ms"
     End If
     CMS_Diag = s
 End Function
