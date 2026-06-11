@@ -78,6 +78,9 @@ Private gStore As Object            ' fourTuple -> cCmsCurve (latest known state
 Private gActiveBatches As Collection ' in-flight cCmsBatch objects (kept alive + inspectable)
 Private gLastBatch As cCmsBatch     ' most recently launched batch (kept after completion)
 
+Private gWatchdogOn As Boolean      ' OnTime delivery watchdog (armed while batches in flight)
+Private gWatchdogNextRun As Date
+
 ' =============================================================================
 '  CONFIGURATION
 ' =============================================================================
@@ -144,6 +147,7 @@ Public Sub RegisterActiveBatch(ByVal Batch As cCmsBatch)
     If gActiveBatches Is Nothing Then Set gActiveBatches = New Collection
     gActiveBatches.Add Batch
     Set gLastBatch = Batch
+    EnsureWatchdog
 End Sub
 
 Public Sub UnregisterActiveBatch(ByVal Batch As cCmsBatch)
@@ -166,8 +170,8 @@ End Function
 
 ' Manually pump message delivery from the Immediate window or a test sub:
 ' runs DoEvents until all active batches complete or TimeoutMs elapses.
-' Production code does NOT need this - delivery is automatic at idle - but in
-' the Immediate window nothing pumps for you between statements.
+' Production code does NOT need this - the watchdog below flushes delivery -
+' but in the Immediate window nothing pumps for you between statements.
 Public Sub CMS_Pump(Optional ByVal TimeoutMs As Long = 2000)
     Dim startTick As Double
     Dim elapsedSec As Double
@@ -179,6 +183,48 @@ Public Sub CMS_Pump(Optional ByVal TimeoutMs As Long = 2000)
         If elapsedSec < 0 Then elapsedSec = elapsedSec + 86400
         If elapsedSec * 1000 >= TimeoutMs Then Exit Do
     Loop While CMS_ActiveBatchCount() > 0
+End Sub
+
+' ---------------------------------------------------------------------------
+'  Delivery watchdog.
+'
+'  The bridge's queued completions normally execute the moment Excel goes
+'  idle, but a batch with NO pump anywhere (e.g. a SET-only flow launched and
+'  forgotten) can sit on a stuck delivery if Excel never returns to a
+'  macro-capable state the bridge can reach (focus parked in the VBE, etc.).
+'  While any batch is in flight we keep a 1-second Application.OnTime tick
+'  armed; entering the tick gives Excel a macro context and its DoEvents
+'  flushes any queued deliveries. When delivery is working normally the tick
+'  finds nothing to do and disarms itself once the last batch completes.
+' ---------------------------------------------------------------------------
+
+Private Sub EnsureWatchdog()
+    If gWatchdogOn Then Exit Sub
+    If CMS_ActiveBatchCount() = 0 Then Exit Sub
+    On Error Resume Next
+    gWatchdogNextRun = Now + TimeSerial(0, 0, 1)
+    Application.OnTime gWatchdogNextRun, "modCms.CmsWatchdogTick"
+    gWatchdogOn = (Err.Number = 0)
+    On Error GoTo 0
+End Sub
+
+' Fired by Application.OnTime - do not call directly.
+Public Sub CmsWatchdogTick()
+    gWatchdogOn = False
+    ' We are in a macro context now; DoEvents lets the bridge's queued
+    ' EB_OnHttpBatch deliveries run if they were stuck waiting for one.
+    DoEvents
+    If CMS_ActiveBatchCount() > 0 Then EnsureWatchdog
+End Sub
+
+' Cancel a pending watchdog tick. Call from Workbook_BeforeClose alongside
+' bridge_stop so a scheduled OnTime cannot reopen the workbook after close.
+Public Sub CMS_StopWatchdog()
+    If Not gWatchdogOn Then Exit Sub
+    On Error Resume Next
+    Application.OnTime gWatchdogNextRun, "modCms.CmsWatchdogTick", , False
+    On Error GoTo 0
+    gWatchdogOn = False
 End Sub
 
 ' One-shot health report:  ?modCms.CMS_Diag

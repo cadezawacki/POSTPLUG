@@ -164,6 +164,14 @@ user keeps working) callbacks fire by themselves as responses land. In a
 Immediate window doesn't pump between statements, so after launching from
 there call `CMS_Pump 2000` to flush deliveries.
 
+**Watchdog.** While any batch is in flight, modCms keeps a 1-second
+`Application.OnTime` tick armed (`CmsWatchdogTick`); entering the tick gives
+Excel a macro context and its `DoEvents` flushes any delivery that got stuck
+waiting for one. This is what makes fire-and-forget SET-only flows complete
+hands-off even when nothing else ever pumps. It disarms itself when the last
+batch finishes; `bridge_stop` cancels it on workbook close. (Break mode still
+blocks everything — OnTime can't fire there either.)
+
 **State resets wipe everything.** Pressing *End* on an error dialog, the
 VBE Stop/Reset button, or editing code in break mode clears every
 module-level variable: the curve store, the active-batch registry, **and

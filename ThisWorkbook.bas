@@ -43,6 +43,7 @@ Public Sub bridge_stop()
     modBridge.StopBridge
     modBridge.StopHeartbeat
     modBridge.DetachBridge   ' stop XLL callbacks into this workbook
+    modCms.CMS_StopWatchdog  ' cancel pending OnTime so close stays closed
     IntersectionObserver.UnregisterAll
 End Sub
 
