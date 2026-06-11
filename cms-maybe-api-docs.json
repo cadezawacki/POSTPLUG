@@ -1,0 +1,1284 @@
+{
+  "openapi" : "3.0.1",
+  "info" : {
+    "title" : "OpenAPI definition",
+    "version" : "v0"
+  },
+  "servers" : [ {
+    "url" : "https://nykpsr000004240.intranet.barcapint.com:25551",
+    "description" : "Generated server url"
+  } ],
+  "tags" : [ {
+    "name" : "CMS Reference Entities",
+    "description" : "API for managing reference entities"
+  } ],
+  "paths" : {
+    "/api/v1/validateCurveNew" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "validateCurveNew call",
+        "description" : "validate if the quote are calibrating or not",
+        "operationId" : "validateCurveNew",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "validateCurveNew Call" : {
+                  "description" : "validateCurveNew Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"validateCurveNew\"><arguments><user-metadata><user-details><user-id>testUser</user-id><application-id>CMS</application-id><compression type=\"BESTSIZE\">true</compression><id>testUser</id><value-date format=\"yyyyMMdd hh:mm:ss\">20211108 08:11:54</value-date><host_id>localMachine</host_id></user-details><password enctype=\"none\"></password></user-metadata><validate-curves><quote marked=\"2021-11-08\" curvekey=\"236225\" instkey=\"1229\" spread=\"0.00219749180383481\" quotetype=\"Q\" tradermarked=\"true\"/><quote marked=\"2021-11-08\" curvekey=\"236225\" instkey=\"1230\" spread=\"0.00219297727290215\" quotetype=\"Q\" tradermarked=\"true\"/><quote marked=\"2021-11-08\" curvekey=\"236225\" instkey=\"1231\" spread=\"0.00218961136582587\" quotetype=\"Q\" tradermarked=\"true\"/><quote marked=\"2021-11-08\" curvekey=\"236225\" instkey=\"1232\" spread=\"0.00229877631150583\" quotetype=\"Q\" tradermarked=\"true\"/><quote marked=\"2021-11-08\" curvekey=\"236225\" instkey=\"1233\" spread=\"0.00240839761876288\" quotetype=\"Q\" tradermarked=\"true\"/><quote marked=\"2021-11-08\" curvekey=\"236225\" instkey=\"1234\" spread=\"0.00366448814789136\" quotetype=\"Q\" tradermarked=\"true\"/><quote marked=\"2021-11-08\" curvekey=\"236225\" instkey=\"1235\" spread=\"0.00553882880017311\" quotetype=\"Q\" tradermarked=\"true\"/><quote marked=\"2021-11-08\" curvekey=\"236225\" instkey=\"1236\" spread=\"0.00819300837954767\" quotetype=\"Q\" tradermarked=\"true\"/><quote marked=\"2021-11-08\" curvekey=\"236225\" instkey=\"1237\" spread=\"0.0107\" quotetype=\"Q\" tradermarked=\"true\"/><quote marked=\"2021-11-08\" curvekey=\"236225\" instkey=\"1238\" spread=\"0.0126143013301634\" quotetype=\"Q\" tradermarked=\"true\"/><quote marked=\"2021-11-08\" curvekey=\"236225\" instkey=\"1239\" spread=\"0.0143885512249289\" quotetype=\"Q\" tradermarked=\"true\"/><quote marked=\"2021-11-08\" curvekey=\"236225\" instkey=\"1242\" spread=\"0.0170382190103719\" quotetype=\"Q\" tradermarked=\"true\"/><quote marked=\"2021-11-08\" curvekey=\"236225\" instkey=\"1245\" spread=\"0.0198441821187169\" quotetype=\"Q\" tradermarked=\"true\"/><quote marked=\"2021-11-08\" curvekey=\"236225\" instkey=\"1211\" spread=\"0.4\" quotetype=\"R\" tradermarked=\"true\"/><curve curvekey=\"236225\" markedas=\"Q\" recovery=\"0.4\"/></validate-curves></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/setMarketData" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "setMarketData call",
+        "description" : "SET market data call to mark a curve",
+        "operationId" : "setMarketData",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "setMarketData Call" : {
+                  "description" : "setMarketData Call",
+                  "value" : { }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/setCurveQuotesNew" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "setCurveQuotesNew call",
+        "description" : "SET call to mark a curve",
+        "operationId" : "setCurveQuotesNew",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "setCurveQuotesNew Call" : {
+                  "description" : "setCurveQuotesNew Call",
+                  "value" : { }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/setCurveAttributesNew" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "setCurveAttributesNew call",
+        "description" : "SET call to update curve attributes",
+        "operationId" : "setCurveAttributesNew",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "setCurveAttributesNew Call" : {
+                  "description" : "setCurveAttributesNew Call",
+                  "value" : { }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/refreshCache" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "refreshCache call",
+        "description" : "refresh curve using curve name / fourtuple in cache ",
+        "operationId" : "refreshCache",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "RefreshCacheByQuery Call" : {
+                  "description" : "RefreshCacheByQuery Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"refreshCacheByQuery\"><arguments><user-metadata><user-details><userId>FIDBlotter</userId><application>CMS</application><id>FIDBlotter</id></user-details><password enctype=\"none\">FIDBlotterPASS</password></user-metadata><refresh-cache-queries><refresh-cache-query fourtuple=\"BAYNGR.EUR.SENIOR_MMR_L.STEC100\" /></refresh-cache-queries></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/refreshCacheByQuery" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "refreshCacheByQuery call",
+        "description" : "refresh curve using curvekey in cache ",
+        "operationId" : "refreshCacheByQuery",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "RefreshCacheByQuery Call" : {
+                  "description" : "RefreshCacheByQuery Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"RefreshCacheByQuery\"><arguments><user-metadata><user-details><userId>FIDBlotter</userId><application>CMS</application><id>FIDBlotter</id></user-details><password enctype=\"none\">FIDBlotterPASS</password></user-metadata><refresh-cache-queries><refresh-cache-query fourtuple=\"BAYNGR.EUR.SENIOR_MMR_L.STEC100\" /></refresh-cache-queries></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/processSQLQuery" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "processSQLQuery call",
+        "description" : "process a named query with passed parameters",
+        "operationId" : "processSQLQuery",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "processSQLQuery Call" : {
+                  "description" : "processSQLQuery Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"processSQLQuery\"><arguments><user-metadata><user-details><userId>testUser</userId><application>CMS</application><id>testUser</id></user-details><password enctype=\"none\"></password></user-metadata><sql-queries><sql-query namedquery=\"LREInfoForGivenLreKey\" beginCount=\"1\" endCount=\"3000\" clear=\"false\" usecache=\"true\" format=\"XML\"><parameters><param name=\"lrekey\" value=\"1543\" /></parameters></sql-query></sql-queries></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getTraderMarkedEligibleQuotes" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "getTraderMarkedEligibleQuotes call",
+        "description" : "get trader marked eligible quotes for given list of curves",
+        "operationId" : "getTraderMarkedEligibleQuotes",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "getTraderMarkedEligibleQuotes Call" : {
+                  "description" : "getTraderMarkedEligibleQuotes Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getTraderMarkedEligibleQuotes\"><arguments><user-metadata><user-details><user-id>faruqovi</user-id><application-id>ICE</application-id><compression type=\"BESTSIZE\">true</compression><id>faruqovi</id><value-date format=\"yyyyMMdd hh:mm:ss\">20190409 12:01:46</value-date><host_id>NYKPWM457326</host_id></user-details><password enctype=\"none\" /></user-metadata><curve-queries><curve-query tag=\"LIVE\" source=\"LEH\" curvekey=\"226093\" /><curve-query tag=\"LIVE\" source=\"LEH\" curvekey=\"257815\" /><curve-query tag=\"LIVE\" source=\"LEH\" curvekey=\"1232421\" /><curve-query tag=\"LIVE\" source=\"LEH\" curvekey=\"1250075\" /><curve-query tag=\"LIVE\" source=\"LEH\" curvekey=\"15721\" /><curve-query tag=\"LIVE\" source=\"LEH\" curvekey=\"24443\" /><curve-query tag=\"LIVE\" source=\"LEH\" curvekey=\"1251205\" /><curve-query tag=\"LIVE\" source=\"LEH\" curvekey=\"21786\" /><curve-query tag=\"LIVE\" source=\"LEH\" curvekey=\"1250074\" /><curve-query tag=\"LIVE\" source=\"LEH\" curvekey=\"226094\" /><curve-query tag=\"LIVE\" source=\"LEH\" curvekey=\"1250076\" /></curve-queries></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getSNMaturityDate" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "getSNMaturityDate call",
+        "description" : "get SN curves maturing on a given valuation date",
+        "operationId" : "getSNMaturityDate",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "getSNMaturityDate Call" : {
+                  "description" : "getSNMaturityDate Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getSNMaturityDate\"><arguments><user-metadata><user-details><user-id>SSS</user-id><application-id>SS</application-id><id>SSS</id><host-id>nykpsr10446.intranet.barcapint.com</host-id><compression type=\"BESTSIZE\">true</compression></user-details><passwordenc type=\"none\" /></user-metadata><SN-maturity-queries><SN-maturity-query valuationdate=\"2021-06-17\" /></SN-maturity-queries></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getReferenceEntityReferencesByQuery" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "getReferenceEntityReferencesByQuery call",
+        "description" : "get entity detail by query",
+        "operationId" : "getReferenceEntityReferencesByQuery",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "Ticker details Call" : {
+                  "description" : "Ticker details Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getReferenceEntityReferencesByQuery\"><arguments><logon-argument><originator-id><user-id>testUser</user-id><application-id>CMS</application-id></originator-id><password enctype=\"none\">FIDBlotterPASS</password></logon-argument><refentity-queries><refentity-query name=\"%ipgim%\"></refentity-query><request id=\"testrequestid\"></request></refentity-queries></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getReferenceEntityById" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "getReferenceEntityByIdcall",
+        "description" : "Retrieves a reference entity based on the provided ID using the /referenceEntities endpoint.",
+        "operationId" : "getReferenceEntityById",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "Ticker Call" : {
+                  "summary" : "Call get ref with red name",
+                  "description" : "Ticker Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getReferenceEntityById\"><arguments><logon-argument><originator-id><user-id>FIR</user-id><application-id>CMS</application-id></originator-id><password enctype=\"none\">FIRPASS</password></logon-argument><instrument-argument><instrument-id code=\"ESMT\" value=\"DB\" /><instrument-view name=\"fia\" /></instrument-argument></arguments></operation></cms-request>"
+                  }
+                },
+                "Red Call" : {
+                  "summary" : "Call get ref with red name",
+                  "description" : "Red Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getReferenceEntityById\"><arguments><logon-argument><originator-id><user-id>FIR</user-id><application-id>CMS</application-id></originator-id><password enctype=\"none\">FIRPASS</password></logon-argument><instrument-argument><instrument-id code=\"RED\" value=\"49EB20\" /><instrument-view name=\"fia\" /></instrument-argument></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getMarketData" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "getMarketData call",
+        "description" : "get market data",
+        "operationId" : "getMarketData",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "getMarketData Call" : {
+                  "description" : "getMarketData Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getMarketData\"><arguments><user-metadata><user-details><application-id>CMS</application-id><id>testUser</id><host_id>testMachine</host_id><compression type=\"BESTSIZE\">false</compression></user-details></user-metadata><Rosetta><market><marketData><action>GET</action><date>LIVE</date><marketSet><label>BOIIN.USD.SENIOR.DERIV</label><version>OFFICIAL</version><location>NYC</location><dataSource>LIVE</dataSource></marketSet></marketData></market></Rosetta></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getIboxxMarkitEODLevels" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "getIboxxMarkitEODLevels call",
+        "description" : "get Iboxx markit eod levels",
+        "operationId" : "getIboxxMarkitEODLevels",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "getIboxxMarkitEODLevels Call" : {
+                  "description" : "getIboxxMarkitEODLevels Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getIboxxMarkitEODLevels\"><arguments><logon-argument><originator-id><user-id>testUser</user-id><application-id>CMS</application-id></originator-id><password enctype=\"none\">FIRPASS</password></logon-argument><isin-queries><isin-query isin=\"GB00BQY77Z29\" query-date=\"&apos;20180723&apos;\" /></isin-queries></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getCurvesByQuery" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "getCurvesByQuery call",
+        "description" : "get details for given set of curves ",
+        "operationId" : "getCurvesByQuery",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "getCurvesByQuery Call" : {
+                  "description" : "getCurvesByQuery Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getCurvesByQuery\"><arguments><user-metadata><user-details><userId>FIDBlotter</userId><application>CMS</application><id>FIDBlotter</id></user-details><password enctype=\"none\">FIDBlotterPASS</password></user-metadata><curve-queries><curve-query tag=\"LIVE\" source=\"LEH\" fourtuple=\"IBM.USD.PREFERRED_NORE_14.DERIV\" /></curve-queries><curve-queries><curve-query tag=\"LIVE\" source=\"LEH\" ticker=\"IBM\" /></curve-queries></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getCurveView" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "getCurveView call",
+        "description" : "get all set of curves for a give view",
+        "operationId" : "getCurveView",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "getCurveViewNew Call" : {
+                  "description" : "getCurveViewNew Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getCurveViewNew\"><arguments><user-metadata><user-details><userId>FIDBlotter</userId><application>CMS</application><id>FIDBlotter</id></user-details><password enctype=\"none\">FIDBlotterPASS</password></user-metadata><curve-view-queries><curve-view-query><view>GLOBAL</view><trader>test</trader></curve-view-query></curve-view-queries></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getCurveViewNew" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "getCurveViewNew call",
+        "description" : "get all set of curves for a give view",
+        "operationId" : "getCurveViewNew",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "getCurveViewNew Call" : {
+                  "description" : "getCurveViewNew Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getCurveViewNew\"><arguments><user-metadata><user-details><userId>FIDBlotter</userId><application>CMS</application><id>FIDBlotter</id></user-details><password enctype=\"none\">FIDBlotterPASS</password></user-metadata><curve-view-queries><curve-view-query><view>GLOBAL</view><trader>test</trader></curve-view-query></curve-view-queries></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getCurveQuotesByQueryNew" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "getCurveQuotesByQueryNew call",
+        "description" : "get quotes for  given  list of curves",
+        "operationId" : "getCurveQuotesByQueryNew",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "getCurveQuotesByQueryNew Call" : {
+                  "description" : "getCurveQuotesByQueryNew Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getCurveQuotesByQueryNew\"><arguments><user-metadata><user-details><userId>testUser</userId><application>CMS</application><id>testUser</id></user-details><password enctype=\"none\"></password></user-metadata><curve-queries><curve-query tag=\"LIVE\" source=\"LEH\" fourtuple=\"IBM.USD.PREFERRED_NORE_14.DERIV\" /></curve-queries></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getCurveMarkingUsers" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "getCurveMarkingUsers call",
+        "description" : "get curve marking users",
+        "operationId" : "getCurveMarkingUsers",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "getCurveMarkingUsers Call" : {
+                  "description" : "getCurveMarkingUsers Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getCurveMarkingUsers\"><arguments><user-metadata><user-details><userId>FIDBlotter</userId><application>CMS</application><id>FIDBlotter</id></user-details><password enctype=\"none\">FIDBlotterPASS</password></user-metadata><curve-queries><curve-query tag=\"LIVE\" source=\"LEH\" fourtuple=\"SFI.USD.SENIOR_NORE.DERIV\" /></curve-queries></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getCurveInstrumentsByQuery" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "getCurveInstrumentsByQuery call",
+        "description" : "get curve for a given instrument, eg currency=JPY",
+        "operationId" : "getCurveInstrumentsByQuery",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "getCurveInstrumentsByQuery Call" : {
+                  "description" : "getCurveInstrumentsByQuery Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getCurveInstrumentsByQuery\"><arguments><user-metadata><user-details><user-id>peltinal</user-id><application-id>eCATS</application-id><compression>false</compression><id>purikara</id><value-date format=\"yyyyMMdd hh:mm:ss\">20190409 10:42:49</value-date><host_id>NYKDWM2036255</host_id></user-details><password enctype=\"none\"></password></user-metadata><instrument-queries><instrument-query currency=\"JPY\"/></instrument-queries></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getCurveEntityDetail" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "getCurveEntityDetail call",
+        "description" : "get curve entity detail",
+        "operationId" : "getCurveEntityDetail",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "getCurveEntityDetail Call" : {
+                  "description" : "getCurveEntityDetail Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getCurveEntityDetail\"><arguments><user-metadata><user-details><user-id>svccmsd</user-id><application-id>CMS</application-id><DATE>02-13-2016</DATE></user-details></user-metadata><curve-entity-detail-queries><entity-detail-query getalltype=\"SN\" /></curve-entity-detail-queries></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getCurveDataAndTypeByQuery" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "getCurveDataAndTypeByQuery call",
+        "description" : "get curve details based on  curve name / fourtuple in cache",
+        "operationId" : "getCurveDataAndTypeByQuery",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "getCurveDataAndTypeByQuery Call" : {
+                  "description" : "getCurveDataAndTypeByQuery Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getCurveDataAndTypeByQuery\"><arguments><logon-argument><originator-id><user-id>FIR</user-id><application-id>CMS</application-id></originator-id><password enctype=\"none\">FIRPASS</password></logon-argument><curve-data-types><curve-type-query fourtuple=\"ITRX_S23_EUR_SUBFIN_5Y.EUR.SUBORDINATE_MMR_L.DERIV\" /></curve-data-types></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getCreditView" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "getCreditView call",
+        "description" : "get credit view",
+        "operationId" : "getCreditView",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "getCreditViewByQuery Call" : {
+                  "description" : "getCreditViewByQuery Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getCreditViewByQuery\"><arguments><user-metadata><user-details><userId>FIDBlotter</userId><application>CMS</application><id>FIDBlotter</id></user-details><password enctype=\"none\">FIDBlotterPASS</password></user-metadata><credit-view-queries><credit-view-query namedquery=\"getCurveAnalyticsView\"><parameters><param name=\"tag\" value=\"LIVE\"/></parameters></credit-view-query></credit-view-queries></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getCreditViewByQuery" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "getCreditViewByQuery call",
+        "description" : "get credit view for a named query ",
+        "operationId" : "getCreditViewByQuery",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "getCreditViewByQuery Call" : {
+                  "description" : "getCreditViewByQuery Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getCreditViewByQuery\"><arguments><user-metadata><user-details><userId>FIDBlotter</userId><application>CMS</application><id>FIDBlotter</id></user-details><password enctype=\"none\">FIDBlotterPASS</password></user-metadata><credit-view-queries><credit-view-query namedquery=\"getCurveAnalyticsView\"><parameters><param name=\"tag\" value=\"LIVE\"/></parameters></credit-view-query></credit-view-queries></arguments></operation></cms-request>"
+                  }
+                },
+                "getCreditViewByQuery MIPVARCLOSE" : {
+                  "description" : "getCreditViewByQuery MIPVARCLOSE",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getCreditViewByQuery\"><arguments><user-metadata><user-details><userId>FIDBlotter</userId><application>CMS</application><id>FIDBlotter</id></user-details><password enctype=\"none\">FIDBlotterPASS</password></user-metadata><credit-view-queries><credit-view-query namedquery=\"getCurveAnalyticsView\"><parameters><param name=\"marked\" value=\"20241003\"/><param name=\"tag\" value=\"MIPVARCLOSE\"/></parameters></credit-view-query></credit-view-queries></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getCreditIndicesByQuery" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "getCreditIndicesByQuery call",
+        "description" : "get indexes",
+        "operationId" : "getCreditIndicesByQuery",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "getCreditIndicesByQuery Call" : {
+                  "description" : "getCreditIndicesByQuery Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getCreditIndicesByQuery\"><arguments><user-metadata><user-details><userId>FIDBlotter</userId><application>CMS</application><id>FIDBlotter</id></user-details><password enctype=\"none\">FIDBlotterPASS</password></user-metadata><credit-index-queries><credit-index-query tradeid=\"CDX.NA.IG\" /></credit-index-queries></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getCreditIndexTransactionTermsByQuery" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "getCreditIndexTransactionTermsByQuery call",
+        "description" : "get transaction terms for a given index",
+        "operationId" : "getCreditIndexTransactionTermsByQuery",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "getCreditIndexTransactionTermsByQuery Call" : {
+                  "description" : "getCreditIndexTransactionTermsByQuery Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getCreditIndexTransactionTermsByQuery\"><arguments><user-metadata><user-details><userId>testUser</userId><application>CMS</application><id>FIDBlotter</id></user-details><password enctype=\"none\">FIDBlotterPASS</password></user-metadata><credit-index-queries><credit-index-query red=\"2I65BYCN3\" /></credit-index-queries></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getCreditIndexComponentsByQuery" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "getCreditIndexComponentsByQuery call",
+        "description" : "get components for a given index",
+        "operationId" : "getCreditIndexComponentsByQuery",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "Ticker details Call" : {
+                  "summary" : "Ticker details Call",
+                  "description" : "Ticker details Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getCreditIndexComponentsByQuery\"><arguments><user-metadata><user-details><user-id>testUser</user-id><application-id>CMS</application-id><compression>false</compression><id>sandhuka</id><value-date format=\"yyyyMMdd hh:mm:ss\">20120807 07:46:24</value-date><host_id>localMachine</host_id></user-details><password enctype=\"none\" /></user-metadata><credit-index-queries><credit-index-query red=\"2I65BYCL7\" /></credit-index-queries></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getCMSUsersByQuery" : {
+      "post" : {
+        "tags" : [ "CMS Reference Entities" ],
+        "summary" : "getCMSUsersByQuery call",
+        "description" : "get cms user detail",
+        "operationId" : "getCMSUsersByQuery",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CmsRequest"
+              },
+              "examples" : {
+                "getCMSUsersByQuery Call" : {
+                  "description" : "getCMSUsersByQuery Call",
+                  "value" : {
+                    "requestHeader" : {
+                      "appId" : "CMS",
+                      "userId" : "testUser",
+                      "hostId" : "localhost",
+                      "requestId" : "testrequestid",
+                      "timeStamp" : 1747907602
+                    },
+                    "request" : "<cms-request><operation name=\"getCMSUsersByQuery\"><arguments><user-metadata><user-details><user-id>venkakav</user-id><application-id>CMS</application-id><compression>false</compression><id>venkakav</id><value-date format=\"yyyyMMdd hh:mm:ss\">20120807 07:46:24</value-date><host_id>localMachine</host_id></user-details><password enctype=\"none\" /></user-metadata><cmsuser-queries><cmsuser-query userid=\"venkakav\" /></cmsuser-queries></arguments></operation></cms-request>"
+                  }
+                }
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CmsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components" : {
+    "schemas" : {
+      "CmsRequest" : {
+        "type" : "object",
+        "properties" : {
+          "requestHeader" : {
+            "type" : "object",
+            "description" : "Requester Details"
+          },
+          "request" : {
+            "type" : "object",
+            "description" : "CMS Xml Request"
+          }
+        },
+        "description" : "CMS request which expects to contain user details in the requestHeader and the exiting xml request as part of the request param."
+      },
+      "CmsResponse" : {
+        "type" : "object",
+        "properties" : {
+          "responseHeader" : {
+            "$ref" : "#/components/schemas/ResponseHeader"
+          },
+          "response" : {
+            "type" : "string",
+            "description" : "CMS xml response if no error"
+          }
+        },
+        "description" : "CMS response contain status in the responseHeader and error details if any and the exiting xml response as part of the response param."
+      },
+      "ResponseHeader" : {
+        "type" : "object",
+        "properties" : {
+          "requestId" : {
+            "type" : "string"
+          },
+          "code" : {
+            "type" : "string",
+            "enum" : [ "UnspecifiedResponseCode", "SUCCESS", "FAILURE", "WARNING" ]
+          },
+          "description" : {
+            "type" : "string"
+          },
+          "detailDescription" : {
+            "type" : "string"
+          }
+        },
+        "description" : "Call status"
+      }
+    }
+  }
+}
