@@ -190,6 +190,44 @@ Also: `CMS_Pending5y`, `CMS_HasPending`, `CMS_PendingKeys`, `CMS_PendingCount`,
 drains; a failed SET leaves the store unchanged so the user can re-stage.
 `CMS_StoreToArray` includes a trailing "Pending 5Y" column.
 
+### Reactive sheet functions (`modCmsUdf.bas`)
+
+```vb
+=CURVE("AEP")                  ' 5Y quote (default)
+=CURVE("AEP", "10Y")           ' any tenor
+=CURVE("AEP", "Recovery")      ' any field: Status, Owner, CurveType, Error,
+                               '   LastMarkedOn/By, IsParent, Pending5y, Key, ...
+=CURVEDIFF("AEP")              ' 5s10s (10Y - 5Y); tenors overridable
+=CURVERATIO("AEP","5Y","10Y")
+=TICKERDIFF("AEP","XYZ","5Y")  ' AEP - XYZ at 5Y
+=TICKERRATIO("AEP","XYZ")
+```
+
+Each call **subscribes its own cell** to the curve(s) it reads
+(`Application.Caller`), so the cell recalcs automatically whenever the store
+changes — GET arrives, SET confirms/fails, pending level staged or cleared.
+Not volatile: only affected cells recalc, marked `Dirty` per curve as the
+deliveries land (in manual calc mode the subscribed cells are calculated
+directly).
+
+**Auto-fetch**: a `CURVE` quote on a *registered* but unfetched curve shows
+`#N/A`, queues the key, and the GET launches the moment calculation ends
+(`Workbook_SheetCalculate` → `CMS_FlushAutoFetch`; the watchdog drains it
+too). When the response lands the cell updates itself. 30s cooldown prevents
+refetch storms; FAILED curves are not auto-retried (`=CURVE(t,"Error")` says
+why); unregistered tickers are never fetched (no identity) — register first.
+Pass `FALSE` as the last argument to disable. The VBA analytics
+(`CMS_CurveDiff` etc.) stay pure cache reads — no hidden I/O.
+
+Manual subscriptions for anything that isn't a `CURVE` cell — e.g. recalc a
+row of formulas when a pending mark confirms:
+
+```vb
+CMS_SubscribeRange "AEP", ws.Range("B17:BT17")   ' fires on every store change
+CMS_UnsubscribeRange "AEP", ws.Range("B17:BT17")
+CMS_UnsubscribeAll "AEP"                          ' or all: CMS_UnsubscribeAll
+```
+
 ### Generic shared store (`modSharedStore.bas`)
 
 Namespaced key-value cache for anything that must survive across modules,

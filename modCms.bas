@@ -84,6 +84,12 @@ Private gWatchdogNextRun As Date
 Private gDeliveryCount As Long      ' total HTTP completions delivered into cCmsBatch
 Private gWatchdogFlushCount As Long ' deliveries that were STUCK until a watchdog tick flushed them
 
+Private gSubs As Object             ' bucket (KEY or TICKER) -> Dictionary(cell address -> True)
+Private gWanted As Object           ' fourTuple keys queued for auto-fetch
+Private gFetchStamp As Object       ' key -> time of last auto-fetch launch (cooldown)
+
+Private Const AUTOFETCH_COOLDOWN_SEC As Long = 30
+
 ' =============================================================================
 '  CONFIGURATION
 ' =============================================================================
@@ -228,6 +234,7 @@ Public Sub CmsWatchdogTick()
         Debug.Print "CMS watchdog " & Format$(Now, "hh:nn:ss") & ": flushed " & _
                     (gDeliveryCount - before) & " stuck deliver(ies)"
     End If
+    CMS_FlushAutoFetch
     If CMS_ActiveBatchCount() > 0 Then EnsureWatchdog
 End Sub
 
@@ -269,6 +276,8 @@ Public Function CMS_Diag() As String
         "; pending 5Y=" & CMS_PendingCount() & _
         "; deliveries=" & gDeliveryCount & _
         "; watchdog flushes=" & gWatchdogFlushCount & vbNewLine
+    s = s & "cell subscriptions=" & CMS_SubscriptionCount() & _
+        "; autofetch queued=" & IIf(gWanted Is Nothing, 0, gWanted.Count) & vbNewLine
     s = s & "active batches=" & CMS_ActiveBatchCount()
     If Not gActiveBatches Is Nothing Then
         For i = 1 To gActiveBatches.Count
@@ -1056,7 +1065,10 @@ End Function
 
 ' Stage (or restage) a pending 5Y level on a registered curve.
 Public Sub CMS_StagePending5y(ByVal TickerOrKey As String, ByVal Level As Double)
-    RequireStored(TickerOrKey).Pending5y = Level
+    Dim cv As cCmsCurve
+    Set cv = RequireStored(TickerOrKey)
+    cv.Pending5y = Level
+    NotifySubscribers cv
 End Sub
 
 ' Un-stage a pending level (user deleted their amend). Returns the cached
@@ -1066,6 +1078,7 @@ Public Function CMS_ClearPending5y(ByVal TickerOrKey As String) As Variant
     Dim cv As cCmsCurve
     Set cv = RequireStored(TickerOrKey)
     cv.Pending5y = Empty
+    NotifySubscribers cv
     CMS_ClearPending5y = cv.Quotes(CMS_IDX_5Y)
 End Function
 
@@ -1107,7 +1120,10 @@ End Function
 Public Sub CMS_ClearAllPending()
     Dim k As Variant
     For Each k In CMS_Store().Keys
-        gStore(k).Pending5y = Empty
+        If Not IsEmpty(gStore(k).Pending5y) Then
+            gStore(k).Pending5y = Empty
+            NotifySubscribers gStore(k)
+        End If
     Next k
 End Sub
 
@@ -1135,6 +1151,161 @@ Public Function CMS_MarkPendingAsync(Optional ByVal OnCurve As String = "", _
 
     Set CMS_MarkPendingAsync = CMS_SetCurves5yAsync(arr, OnCurve, OnAllDone, TimeoutMs)
 End Function
+
+' =============================================================================
+'  CELL SUBSCRIPTIONS - reactive recalc of sheet references
+'
+'  Cells (or any ranges) subscribe to a curve; whenever that curve's store
+'  entry changes (GET arrives, SET confirms or fails, pending level staged or
+'  cleared) the subscribed cells are marked dirty and recalculated. The CURVE
+'  sheet UDFs self-subscribe via Application.Caller, so =CURVE("AEP","5Y")
+'  updates by itself as data lands; CMS_SubscribeRange is the manual hook for
+'  anything else (e.g. the row you want refreshed when a pending mark lands).
+' =============================================================================
+
+' Subscribe a range to a curve (by ticker or key; unregistered tickers are
+' bucketed by name and start firing once the ticker is registered+fetched).
+Public Sub CMS_SubscribeRange(ByVal TickerOrKey As String, ByVal Target As Range)
+    SubscribeAddress BucketFor(TickerOrKey), AddrOf(Target)
+End Sub
+
+Public Sub CMS_UnsubscribeRange(ByVal TickerOrKey As String, ByVal Target As Range)
+    Dim bucket As String
+    bucket = BucketFor(TickerOrKey)
+    If gSubs Is Nothing Then Exit Sub
+    If Not gSubs.Exists(bucket) Then Exit Sub
+    If gSubs(bucket).Exists(AddrOf(Target)) Then gSubs(bucket).Remove AddrOf(Target)
+End Sub
+
+' Drop all subscriptions, or just one curve's.
+Public Sub CMS_UnsubscribeAll(Optional ByVal TickerOrKey As String = "")
+    If gSubs Is Nothing Then Exit Sub
+    If Len(TickerOrKey) = 0 Then
+        gSubs.RemoveAll
+    ElseIf gSubs.Exists(BucketFor(TickerOrKey)) Then
+        gSubs.Remove BucketFor(TickerOrKey)
+    End If
+End Sub
+
+Public Function CMS_SubscriptionCount() As Long
+    Dim b As Variant
+    If gSubs Is Nothing Then Exit Function
+    For Each b In gSubs.Keys
+        CMS_SubscriptionCount = CMS_SubscriptionCount + gSubs(b).Count
+    Next b
+End Function
+
+' Recalc every cell subscribed to this curve (called from the delivery path
+' and the pending-staging functions; runs in a macro context).
+Public Sub NotifySubscribers(ByVal Curve As cCmsCurve)
+    NotifyBucket Curve.Key
+    NotifyBucket Curve.Ticker
+End Sub
+
+Private Sub NotifyBucket(ByVal Bucket As String)
+    Dim addrs As Variant
+    Dim a As Variant
+    Dim rng As Range
+    Dim bang As Long
+
+    If gSubs Is Nothing Then Exit Sub
+    Bucket = UCase$(Trim$(Bucket))
+    If Len(Bucket) = 0 Then Exit Sub
+    If Not gSubs.Exists(Bucket) Then Exit Sub
+
+    addrs = gSubs(Bucket).Keys   ' snapshot: recalc may re-subscribe
+    For Each a In addrs
+        Set rng = Nothing
+        On Error Resume Next
+        bang = InStrRev(CStr(a), "!")
+        Set rng = ThisWorkbook.Worksheets(Left$(CStr(a), bang - 1)).Range(Mid$(CStr(a), bang + 1))
+        On Error GoTo 0
+        If rng Is Nothing Then
+            gSubs(Bucket).Remove a   ' sheet/cell gone - prune
+        Else
+            On Error Resume Next
+            rng.Dirty                ' automatic mode: Excel recalcs dependents after this macro
+            If Application.Calculation = xlCalculationManual Then rng.Calculate
+            On Error GoTo 0
+        End If
+    Next a
+End Sub
+
+Private Function AddrOf(ByVal Target As Range) As String
+    AddrOf = Target.Worksheet.Name & "!" & Target.Address
+End Function
+
+' Resolved key when possible, otherwise the raw upper-cased ticker (so cells
+' can subscribe before the ticker is registered).
+Private Function BucketFor(ByVal TickerOrKey As String) As String
+    On Error Resume Next
+    BucketFor = CMS_ResolveKey(TickerOrKey)
+    On Error GoTo 0
+    If Len(BucketFor) = 0 Then BucketFor = UCase$(Trim$(TickerOrKey))
+End Function
+
+Private Sub SubscribeAddress(ByVal Bucket As String, ByVal Addr As String)
+    If Len(Bucket) = 0 Or Len(Addr) = 0 Then Exit Sub
+    If gSubs Is Nothing Then
+        Set gSubs = CreateObject("Scripting.Dictionary")
+        gSubs.CompareMode = vbTextCompare
+    End If
+    If Not gSubs.Exists(Bucket) Then
+        Dim d As Object
+        Set d = CreateObject("Scripting.Dictionary")
+        d.CompareMode = vbTextCompare
+        gSubs.Add Bucket, d
+    End If
+    gSubs(Bucket)(Addr) = True
+End Sub
+
+' =============================================================================
+'  AUTO-FETCH QUEUE
+'  Sheet UDFs cannot launch HTTP (or much of anything) from calc context, so
+'  they queue the key here; the queue is drained right after calculation ends
+'  (Workbook_SheetCalculate) or by the delivery watchdog - both proper macro
+'  contexts. When the GET lands, subscriptions recalc the waiting cells.
+' =============================================================================
+
+' Queue a REGISTERED curve for fetching. Cooldown prevents refetch storms
+' from repeated recalcs. Curves whose last fetch FAILED are not auto-retried
+' (the cell shows #N/A and CURVE(t,"Error") shows why) - refresh manually.
+Public Sub QueueAutoFetch(ByVal Key As String)
+    If gWanted Is Nothing Then
+        Set gWanted = CreateObject("Scripting.Dictionary")
+        gWanted.CompareMode = vbTextCompare
+        Set gFetchStamp = CreateObject("Scripting.Dictionary")
+        gFetchStamp.CompareMode = vbTextCompare
+    End If
+    If gFetchStamp.Exists(Key) Then
+        If DateDiff("s", gFetchStamp(Key), Now()) < AUTOFETCH_COOLDOWN_SEC Then Exit Sub
+    End If
+    gWanted(Key) = True
+End Sub
+
+' Launch one async GET for everything queued. Safe to call often (no-op when
+' empty). Wired into Workbook_SheetCalculate and the watchdog tick.
+Public Sub CMS_FlushAutoFetch()
+    Dim ks As Variant
+    Dim arr() As Variant
+    Dim i As Long
+
+    If gWanted Is Nothing Then Exit Sub
+    If gWanted.Count = 0 Then Exit Sub
+
+    ks = gWanted.Keys
+    gWanted.RemoveAll
+    ReDim arr(0 To UBound(ks), 0 To 0)
+    For i = 0 To UBound(ks)
+        arr(i, 0) = ks(i)
+        gFetchStamp(ks(i)) = Now()
+    Next i
+
+    On Error Resume Next
+    CMS_GetCurvesAsync arr
+    If Err.Number <> 0 Then Debug.Print "CMS auto-fetch failed to launch: " & Err.Description
+    On Error GoTo 0
+End Sub
 
 ' =============================================================================
 '  REQUEST CONSTRUCTION

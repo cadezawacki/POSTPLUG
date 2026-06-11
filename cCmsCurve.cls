@@ -119,6 +119,46 @@ Public Function IsOk() As Boolean
     IsOk = (Status = modCms.CMS_STATUS_OK)
 End Function
 
+Public Function HasQuotes() As Boolean
+    Dim i As Long
+    For i = 0 To 16
+        If Not IsEmpty(Quotes(i)) Then
+            HasQuotes = True
+            Exit Function
+        End If
+    Next i
+End Function
+
+' Generic field access (sheet UDFs / dynamic readers): any tenor name plus
+' every scalar and identity field. Unknown names return #NAME?.
+Public Function Field(ByVal FieldName As String) As Variant
+    Dim idx As Long
+    idx = modCms.CMS_TenorIndex(FieldName)
+    If idx >= 0 Then
+        Field = Quotes(idx)
+        Exit Function
+    End If
+    Select Case UCase$(Replace(Trim$(FieldName), " ", ""))
+        Case "RECOVERY":                      Field = Recovery
+        Case "LASTMARKEDON", "MARKED":        Field = LastMarkedOn
+        Case "LASTMARKEDBY":                  Field = LastMarkedBy
+        Case "OWNER":                         Field = Owner
+        Case "ISPARENT":                      Field = IsParent
+        Case "CURVETYPE":                     Field = CurveType
+        Case "STATUS":                        Field = Status
+        Case "ERROR", "ERRORMSG", "ERRORMESSAGE": Field = ErrorMsg
+        Case "PENDING", "PENDING5Y":          Field = Pending5y
+        Case "TICKER":                        Field = Ticker
+        Case "CCY", "CURRENCY":               Field = Ccy
+        Case "DEBTCLASS":                     Field = DebtClass
+        Case "PRODUCT":                       Field = Product
+        Case "QUOTECONVENTION", "CONVENTION": Field = QuoteConvention
+        Case "KEY", "FOURTUPLE", "LABEL":     Field = Key()
+        Case "ELAPSEDMS":                     Field = ElapsedMs
+        Case Else:                            Field = CVErr(2029) ' #NAME?
+    End Select
+End Function
+
 ' One result row: 17 tenor quotes + the 8 scalar columns
 ' (Recovery, LastMarkedOn, LastMarkedBy, Owner, IsParent, CurveType, Status, Error).
 ' Same layout as the legacy CMS_GetCurveQuoteData with TENORS_17_STANDARD.

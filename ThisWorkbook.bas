@@ -109,6 +109,13 @@ Private Sub Workbook_SheetSelectionChange(ByVal Sh As Object, ByVal Target As Ra
     IntersectionObserver.CheckIntersection Target
 End Sub
 
+' CURVE() sheet UDFs can't launch HTTP from calc context - they queue the
+' keys instead, and this drains the queue the moment calculation finishes.
+Private Sub Workbook_SheetCalculate(ByVal Sh As Object)
+    On Error Resume Next
+    modCms.CMS_FlushAutoFetch
+End Sub
+
 ' Register observer zones at startup so selection-driven callbacks (and the
 ' async HTTP POSTs they fire) work immediately - previously zones were only
 ' registered after the first cell EDIT on a cms_col sheet.

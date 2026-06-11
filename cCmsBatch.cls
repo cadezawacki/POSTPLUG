@@ -157,6 +157,7 @@ Public Sub FailCurve(ByVal Curve As cCmsCurve, ByVal Reason As String)
     Curve.Status = modCms.CMS_STATUS_FAILED
     Curve.ErrorMsg = Reason
     mFailedCount = mFailedCount + 1
+    modCms.NotifySubscribers Curve
     FireOnCurve Curve
 End Sub
 
@@ -222,6 +223,9 @@ Public Sub OnHttpDone(RequestId As String, r As cHttpResponse)
                     modCms.StoreUpsert cv
                 End If
             End If
+            ' Recalc any sheet cells subscribed to this curve (status updates
+            ' included, so FAILED surfaces in CURVE(t,"Status") cells too).
+            modCms.NotifySubscribers cv
             FireOnCurve cv
         End If
     Next k
