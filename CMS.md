@@ -144,6 +144,57 @@ CMS_WriteBatchToRange b, [A1], True         ' a batch, row-per-input-row
 StoreGet("IBM.USD.SENIOR.DERIV").Quote("5Y")
 ```
 
+## Delivery model — when do callbacks actually fire?
+
+The .NET engine does the HTTP I/O on worker threads — that part is always
+running in the background. The **final hop into VBA** (`EB_OnHttpBatch` →
+`cHttpBatch` → `cCmsBatch` → your callbacks) is queued via Excel-DNA's
+`QueueAsMacro` and executes only when Excel's main thread can run a macro:
+
+| Excel state | Delivery |
+|---|---|
+| Idle at the grid (normal use) | automatic, immediate |
+| Your VBA still running | deferred until `DoEvents` (this is what `WaitAll` pumps) |
+| VBE **break mode** (breakpoint, or you clicked *Debug* on an error) | **blocked entirely** until you resume/reset |
+| Cell edit mode / modal dialog | blocked until you leave it |
+
+So in production (button fires `CMS_GetCurvesAsync`, the sub returns, the
+user keeps working) callbacks fire by themselves as responses land. In a
+*debugging session* nothing arrives while you sit at a breakpoint — and the
+Immediate window doesn't pump between statements, so after launching from
+there call `CMS_Pump 2000` to flush deliveries.
+
+**State resets wipe everything.** Pressing *End* on an error dialog, the
+VBE Stop/Reset button, or editing code in break mode clears every
+module-level variable: the curve store, the active-batch registry, **and
+modBridge's request router** — in-flight responses arriving after a reset
+are silently dropped. If you reset mid-test, relaunch the batch.
+
+### Debugging recipe (Immediate window)
+
+```vb
+?modCms.CMS_Diag                       ' transport, endpoint, store size, live batches,
+                                       ' and the XLL's last Application.Run failure
+Set b = CMS_GetCurvesAsync([D9:H450], "LIVE", , "MyMod.OnCurve", "MyMod.OnAllDone")
+CMS_Pump 5000                          ' pump until done (or timeout)
+?CMS_LastBatch.IsDone, CMS_LastBatch.FailedCount, CMS_Store().Count
+?StoreGet("AEP.USD.SENIOR_NORE_14.SNAC100").Quote("5Y")   ' Quote returns a VALUE - no Set
+```
+
+Launched batches are held in a registry until complete (and `CMS_LastBatch`
+keeps the most recent one), so they stay alive and inspectable even after
+your local `batch` variable goes out of scope.
+
+Callback name gotchas: the callback subs must be `Public` in a **standard
+module** (not a sheet/ThisWorkbook module) with the exact signatures
+`(curve As cCmsCurve, batch As cCmsBatch)` / `(batch As cCmsBatch)`.
+If `Application.Run` can't resolve or invoke them, the failure is printed
+to the Immediate window by `cCmsBatch`.
+
+Yes — the sync wrappers write to the store too: they run the same async
+parse path under a `WaitAll` pump, so a successful `CMS_GetCurveQuoteData`
+leaves the curve in `CMS_Store()` (until the next state reset clears it).
+
 ## Failure semantics
 
 - Transport errors (timeout, non-2xx, SOAP fault, REST FAILURE) fail every

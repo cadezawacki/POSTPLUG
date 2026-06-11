@@ -82,6 +82,16 @@ Public Property Get FailedCount() As Long
     FailedCount = mFailedCount
 End Property
 
+' Curves whose outcome is known (OK or FAILED).
+Public Property Get CompletedCurves() As Long
+    Dim k As Variant
+    Dim n As Long
+    For Each k In mCurves.Keys
+        If Len(mCurves(k).Status) > 0 Then n = n + 1
+    Next k
+    CompletedCurves = n
+End Property
+
 Public Function Keys() As Variant
     Keys = mCurves.Keys
 End Function
@@ -204,8 +214,11 @@ End Sub
 Private Sub CompleteBatch()
     If mDone Then Exit Sub
     mDone = True
-    ' Break the cCmsBatch <-> cHttpBatch reference cycle so both can be freed.
+    ' Break the cCmsBatch <-> cHttpBatch reference cycle so both can be freed,
+    ' and drop out of the active-batch registry (CMS_LastBatch keeps the most
+    ' recent one reachable for inspection).
     mHttp.SetCallback Nothing, ""
+    modCms.UnregisterActiveBatch Me
     If Len(mOnAllDone) > 0 Then
         On Error Resume Next
         Application.Run mOnAllDone, Me

@@ -75,6 +75,8 @@ Private gMachineName As String
 
 Private gTenorIndex As Object       ' "5Y" -> 8 etc.
 Private gStore As Object            ' fourTuple -> cCmsCurve (latest known state)
+Private gActiveBatches As Collection ' in-flight cCmsBatch objects (kept alive + inspectable)
+Private gLastBatch As cCmsBatch     ' most recently launched batch (kept after completion)
 
 ' =============================================================================
 '  CONFIGURATION
@@ -115,6 +117,95 @@ Private Function NamedRangeText(ByVal Name As String) As String
     On Error Resume Next
     NamedRangeText = CStr(ThisWorkbook.Names(Name).RefersToRange.Value2)
     On Error GoTo 0
+End Function
+
+' =============================================================================
+'  BATCH REGISTRY, PUMP & DIAGNOSTICS
+'
+'  Delivery model (read this before debugging "callbacks never fire"):
+'  the XLL does its I/O on .NET worker threads, but the final hop into VBA
+'  (EB_OnHttpBatch -> cHttpBatch -> cCmsBatch -> your callbacks) is queued via
+'  QueueAsMacro and can only execute when Excel's main thread is able to run
+'  a macro: no VBA executing, NOT in VBE break mode, no cell being edited,
+'  no modal dialog. When Excel is genuinely idle, delivery is automatic and
+'  immediate. While your own VBA is running, DoEvents opens the gate (that is
+'  what WaitAll does). Sitting at a breakpoint / after hitting Debug on an
+'  error dialog blocks ALL delivery until you resume or reset.
+'
+'  Also: pressing End/Reset (or editing code in break mode) wipes every
+'  module-level variable - the curve store, modBridge's request router, the
+'  active-batch registry. In-flight responses arriving after a reset are
+'  dropped. If you reset mid-test, relaunch the batch.
+' =============================================================================
+
+' Every launched batch is held here until complete, so it stays alive and
+' inspectable even after the caller's local variable goes out of scope.
+Public Sub RegisterActiveBatch(ByVal Batch As cCmsBatch)
+    If gActiveBatches Is Nothing Then Set gActiveBatches = New Collection
+    gActiveBatches.Add Batch
+    Set gLastBatch = Batch
+End Sub
+
+Public Sub UnregisterActiveBatch(ByVal Batch As cCmsBatch)
+    Dim i As Long
+    If gActiveBatches Is Nothing Then Exit Sub
+    For i = gActiveBatches.Count To 1 Step -1
+        If gActiveBatches(i) Is Batch Then gActiveBatches.Remove i
+    Next i
+End Sub
+
+' The most recently launched batch (kept after completion for inspection):
+'   ?CMS_LastBatch.IsDone, CMS_LastBatch.PendingRequests, CMS_LastBatch.FailedCount
+Public Function CMS_LastBatch() As cCmsBatch
+    Set CMS_LastBatch = gLastBatch
+End Function
+
+Public Function CMS_ActiveBatchCount() As Long
+    If Not gActiveBatches Is Nothing Then CMS_ActiveBatchCount = gActiveBatches.Count
+End Function
+
+' Manually pump message delivery from the Immediate window or a test sub:
+' runs DoEvents until all active batches complete or TimeoutMs elapses.
+' Production code does NOT need this - delivery is automatic at idle - but in
+' the Immediate window nothing pumps for you between statements.
+Public Sub CMS_Pump(Optional ByVal TimeoutMs As Long = 2000)
+    Dim startTick As Double
+    Dim elapsedSec As Double
+    startTick = Timer
+    Do
+        DoEvents
+        modBridge.Sleep 5
+        elapsedSec = Timer - startTick
+        If elapsedSec < 0 Then elapsedSec = elapsedSec + 86400
+        If elapsedSec * 1000 >= TimeoutMs Then Exit Do
+    Loop While CMS_ActiveBatchCount() > 0
+End Sub
+
+' One-shot health report:  ?modCms.CMS_Diag
+Public Function CMS_Diag() As String
+    Dim s As String
+    Dim i As Long
+    Dim b As cCmsBatch
+    EnsureConfig
+    s = "transport=" & gTransport & "; endpoint=" & gEndpointUrl & vbNewLine
+    s = s & "bridge loaded=" & modBridge.AddinLoaded() & _
+        "; last dispatch error=" & modBridge.BridgeLastDispatchError() & vbNewLine
+    s = s & "store curves=" & CMS_Store().Count & vbNewLine
+    s = s & "active batches=" & CMS_ActiveBatchCount()
+    If Not gActiveBatches Is Nothing Then
+        For i = 1 To gActiveBatches.Count
+            Set b = gActiveBatches(i)
+            s = s & vbNewLine & "  [" & i & "] " & b.Action & ": " & _
+                b.CompletedCurves & "/" & b.Count & " curves done, " & _
+                b.PendingRequests & " request(s) pending, " & b.FailedCount & " failed"
+        Next i
+    End If
+    If Not gLastBatch Is Nothing Then
+        s = s & vbNewLine & "last batch: " & gLastBatch.Action & _
+            " done=" & gLastBatch.IsDone & " curves=" & gLastBatch.Count & _
+            " failed=" & gLastBatch.FailedCount
+    End If
+    CMS_Diag = s
 End Function
 
 ' =============================================================================
@@ -236,6 +327,7 @@ Public Function CMS_GetCurvesAsync(ByVal FiveTuples As Variant, _
 
     Set batch = New cCmsBatch
     batch.Init "GET", OnCurve, OnAllDone
+    RegisterActiveBatch batch
 
     Set curves = NormalizeFiveTuples(FiveTuples, batch, rowKeys)
     batch.SetRowKeys rowKeys
@@ -283,6 +375,7 @@ Public Function CMS_SetCurvesAsync(ByVal FiveTuples As Variant, _
 
     Set batch = New cCmsBatch
     batch.Init "SET", OnCurve, OnAllDone
+    RegisterActiveBatch batch
 
     Set curves = NormalizeFiveTuples(FiveTuples, batch, rowKeys)
     batch.SetRowKeys rowKeys
@@ -345,6 +438,7 @@ Public Function CMS_SetCurves5yAsync(ByVal KeysAndNew5y As Variant, _
 
     Set batch = New cCmsBatch
     batch.Init "SET", OnCurve, OnAllDone
+    RegisterActiveBatch batch
 
     arr = ToArray2D(KeysAndNew5y)
     n = UBound(arr, 1) - LBound(arr, 1) + 1
