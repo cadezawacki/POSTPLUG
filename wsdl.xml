@@ -1,0 +1,1008 @@
+
+<wsdl:definitions xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/" xmlns:tns="http://www.lehman.com/fta/CreditMarkingService" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:ns1="http://schemas.xmlsoap.org/soap/http" name="CreditMarkingService" targetNamespace="http://www.lehman.com/fta/CreditMarkingService">
+<wsdl:types>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:tns="http://www.lehman.com/fta/CreditMarkingService" attributeFormDefault="unqualified" elementFormDefault="unqualified" targetNamespace="http://www.lehman.com/fta/CreditMarkingService" version="1.0">
+<xs:complexType name="curve">
+<xs:sequence>
+<xs:element minOccurs="0" name="approvedBy" type="xs:string"/>
+<xs:element minOccurs="0" name="coupon" type="xs:string"/>
+<xs:element minOccurs="0" name="curveDate" type="xs:string"/>
+<xs:element minOccurs="0" name="curveKey" type="xs:int"/>
+<xs:element minOccurs="0" name="fourTuple" type="xs:string"/>
+<xs:element minOccurs="0" name="interpolation" type="xs:string"/>
+<xs:element minOccurs="0" name="markedBy" type="xs:string"/>
+<xs:element minOccurs="0" name="markedTime" type="xs:string"/>
+<xs:element minOccurs="0" name="owner" type="xs:string"/>
+<xs:element minOccurs="0" name="product" type="xs:string"/>
+<xs:element maxOccurs="unbounded" minOccurs="0" name="proxyCurveLst" nillable="true" type="tns:curve"/>
+<xs:element maxOccurs="unbounded" minOccurs="0" name="quote" nillable="true" type="tns:quote"/>
+<xs:element minOccurs="0" name="quoteType" type="xs:string"/>
+<xs:element minOccurs="0" name="reason" type="xs:string"/>
+<xs:element minOccurs="0" name="recovery" type="xs:string"/>
+<xs:element minOccurs="0" name="relation" type="xs:string"/>
+<xs:element minOccurs="0" name="reqType" type="xs:string"/>
+<xs:element minOccurs="0" name="sipDate" type="xs:string"/>
+<xs:element minOccurs="0" name="sipDateType" type="xs:string"/>
+<xs:element minOccurs="0" name="status" type="xs:string"/>
+<xs:element minOccurs="0" name="tag" type="xs:string"/>
+</xs:sequence>
+</xs:complexType>
+<xs:complexType name="quote">
+<xs:sequence>
+<xs:element minOccurs="0" name="curveKey" type="xs:string"/>
+<xs:element minOccurs="0" name="instKey" type="xs:string"/>
+<xs:element minOccurs="0" name="marked" type="xs:string"/>
+<xs:element minOccurs="0" name="maturity" type="xs:string"/>
+<xs:element minOccurs="0" name="maturityValuationDate" type="xs:string"/>
+<xs:element minOccurs="0" name="period" type="xs:string"/>
+<xs:element minOccurs="0" name="quoteType" type="xs:string"/>
+<xs:element minOccurs="0" name="spread" type="xs:string"/>
+<xs:element minOccurs="0" name="traderMarked" type="xs:string"/>
+</xs:sequence>
+</xs:complexType>
+<xs:element name="Exception" type="tns:Exception"/>
+<xs:complexType name="Exception">
+<xs:sequence>
+<xs:element minOccurs="0" name="message" type="xs:string"/>
+</xs:sequence>
+</xs:complexType>
+</xs:schema>
+</wsdl:types>
+<wsdl:message name="getCurveView">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCreditIndexTransactionTermsByQuery">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getSNMaturityDateResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="setCurveQuotesResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCurveQuotesByQueryNew">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="validateCurveQuotesByTagResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCurveQuotesByQueryResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="validateCurveNewResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="validateMarketDataResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCurveDataAndTypeByQuery">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="setCurveAttributes">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="validateCurveQuotesByTag">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="tns:curve"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCurvesByQueryResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="validateNewCurve">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="validateCurveResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCurveInstrumentsByQueryResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCurveQuotesByTagResponse">
+<wsdl:part name="result" type="tns:curve"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCurveQuotesByQueryNewResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCreditIndexTransactionTermsByQueryResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCurveDataAndTypeByQueryResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getSNMaturityDate">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="validateCurve">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="resetClassResponse"> </wsdl:message>
+<wsdl:message name="getCurveEntityDetail">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="validatePartialCurveTree">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getReferenceEntityByIdResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="setCurveAttributesResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="setCurveQuotesNewResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="setCurveQuotes">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="setQuotesByTermsResponse"> </wsdl:message>
+<wsdl:message name="getCurveInstrumentsByQuery">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getReferenceEntityReferencesByQuery">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getIboxxMarkitEODLevels">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="validateMarketData">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="validateCurveNew">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCreditIndexTrancheTermsByQuery">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getIboxxMarkitEODLevelsResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getMarketDataResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="validateNewCurveResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="setCurveQuotesNew">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="defaultMethodResponse">
+<wsdl:part name="return" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getMarketData">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCreditView">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCreditIndexComponentsByQuery">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCurveViewNewResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getReferenceEntityReferencesByQueryResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="processSQLQuery">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCurveViewResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCurveMarkingUsersResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCurveQuotesByTag">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="setCurveQuotesByTagResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="setMarketDataResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCurveQuotesByQuery">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="validatePartialCurveTreeResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCurveViewNew">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="setQuotesByTerms">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string1" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string2" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string3" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string4" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string5" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string6" type="xsd:string"> </wsdl:part>
+<wsdl:part name="doubleVal" type="xsd:double"> </wsdl:part>
+<wsdl:part name="doubleVal0" type="xsd:double"> </wsdl:part>
+<wsdl:part name="doubleVal1" type="xsd:double"> </wsdl:part>
+<wsdl:part name="doubleVal2" type="xsd:double"> </wsdl:part>
+<wsdl:part name="doubleVal3" type="xsd:double"> </wsdl:part>
+<wsdl:part name="doubleVal4" type="xsd:double"> </wsdl:part>
+<wsdl:part name="doubleVal5" type="xsd:double"> </wsdl:part>
+<wsdl:part name="doubleVal6" type="xsd:double"> </wsdl:part>
+<wsdl:part name="doubleVal7" type="xsd:double"> </wsdl:part>
+<wsdl:part name="doubleVal8" type="xsd:double"> </wsdl:part>
+<wsdl:part name="doubleVal9" type="xsd:double"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="processSQLQueryResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="refreshCache">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="setCurveQuotesByTag">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="tns:curve"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCreditViewResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getTraderMarkedEligibleQuotes">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCreditIndexTrancheTermsByQueryResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="refreshCacheResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCMSUsersByQueryResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCMSUsersByQuery">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="setMarketData">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCurveEntityDetailResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="defaultMethod">
+<wsdl:part name="arg0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="setCurveAttributesNewResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getTraderMarkedEligibleQuotesResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="setCurveAttributesNew">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getReferenceEntityById">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string1" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCurvesByQuery">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="Exception">
+<wsdl:part element="tns:Exception" name="Exception"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCreditIndicesByQuery">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCreditIndexComponentsByQueryResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="resetClass">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCurveMarkingUsers">
+<wsdl:part name="string" type="xsd:string"> </wsdl:part>
+<wsdl:part name="string0" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:message name="getCreditIndicesByQueryResponse">
+<wsdl:part name="result" type="xsd:string"> </wsdl:part>
+</wsdl:message>
+<wsdl:portType name="CreditMarkingService">
+<wsdl:operation name="getCurveView">
+<wsdl:input message="tns:getCurveView" name="getCurveView"> </wsdl:input>
+<wsdl:output message="tns:getCurveViewResponse" name="getCurveViewResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCreditIndexTransactionTermsByQuery">
+<wsdl:input message="tns:getCreditIndexTransactionTermsByQuery" name="getCreditIndexTransactionTermsByQuery"> </wsdl:input>
+<wsdl:output message="tns:getCreditIndexTransactionTermsByQueryResponse" name="getCreditIndexTransactionTermsByQueryResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCurveQuotesByQueryNew">
+<wsdl:input message="tns:getCurveQuotesByQueryNew" name="getCurveQuotesByQueryNew"> </wsdl:input>
+<wsdl:output message="tns:getCurveQuotesByQueryNewResponse" name="getCurveQuotesByQueryNewResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="processSQLQuery">
+<wsdl:input message="tns:processSQLQuery" name="processSQLQuery"> </wsdl:input>
+<wsdl:output message="tns:processSQLQueryResponse" name="processSQLQueryResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCurveQuotesByTag">
+<wsdl:input message="tns:getCurveQuotesByTag" name="getCurveQuotesByTag"> </wsdl:input>
+<wsdl:output message="tns:getCurveQuotesByTagResponse" name="getCurveQuotesByTagResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCurveDataAndTypeByQuery">
+<wsdl:input message="tns:getCurveDataAndTypeByQuery" name="getCurveDataAndTypeByQuery"> </wsdl:input>
+<wsdl:output message="tns:getCurveDataAndTypeByQueryResponse" name="getCurveDataAndTypeByQueryResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="setCurveAttributes">
+<wsdl:input message="tns:setCurveAttributes" name="setCurveAttributes"> </wsdl:input>
+<wsdl:output message="tns:setCurveAttributesResponse" name="setCurveAttributesResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCurveQuotesByQuery">
+<wsdl:input message="tns:getCurveQuotesByQuery" name="getCurveQuotesByQuery"> </wsdl:input>
+<wsdl:output message="tns:getCurveQuotesByQueryResponse" name="getCurveQuotesByQueryResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="validateCurveQuotesByTag">
+<wsdl:input message="tns:validateCurveQuotesByTag" name="validateCurveQuotesByTag"> </wsdl:input>
+<wsdl:output message="tns:validateCurveQuotesByTagResponse" name="validateCurveQuotesByTagResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCurveViewNew">
+<wsdl:input message="tns:getCurveViewNew" name="getCurveViewNew"> </wsdl:input>
+<wsdl:output message="tns:getCurveViewNewResponse" name="getCurveViewNewResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="setQuotesByTerms">
+<wsdl:input message="tns:setQuotesByTerms" name="setQuotesByTerms"> </wsdl:input>
+<wsdl:output message="tns:setQuotesByTermsResponse" name="setQuotesByTermsResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="validateNewCurve">
+<wsdl:input message="tns:validateNewCurve" name="validateNewCurve"> </wsdl:input>
+<wsdl:output message="tns:validateNewCurveResponse" name="validateNewCurveResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="refreshCache">
+<wsdl:input message="tns:refreshCache" name="refreshCache"> </wsdl:input>
+<wsdl:output message="tns:refreshCacheResponse" name="refreshCacheResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="setCurveQuotesByTag">
+<wsdl:input message="tns:setCurveQuotesByTag" name="setCurveQuotesByTag"> </wsdl:input>
+<wsdl:output message="tns:setCurveQuotesByTagResponse" name="setCurveQuotesByTagResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getSNMaturityDate">
+<wsdl:input message="tns:getSNMaturityDate" name="getSNMaturityDate"> </wsdl:input>
+<wsdl:output message="tns:getSNMaturityDateResponse" name="getSNMaturityDateResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="validateCurve">
+<wsdl:input message="tns:validateCurve" name="validateCurve"> </wsdl:input>
+<wsdl:output message="tns:validateCurveResponse" name="validateCurveResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getTraderMarkedEligibleQuotes">
+<wsdl:input message="tns:getTraderMarkedEligibleQuotes" name="getTraderMarkedEligibleQuotes"> </wsdl:input>
+<wsdl:output message="tns:getTraderMarkedEligibleQuotesResponse" name="getTraderMarkedEligibleQuotesResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCurveEntityDetail">
+<wsdl:input message="tns:getCurveEntityDetail" name="getCurveEntityDetail"> </wsdl:input>
+<wsdl:output message="tns:getCurveEntityDetailResponse" name="getCurveEntityDetailResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="validatePartialCurveTree">
+<wsdl:input message="tns:validatePartialCurveTree" name="validatePartialCurveTree"> </wsdl:input>
+<wsdl:output message="tns:validatePartialCurveTreeResponse" name="validatePartialCurveTreeResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="setCurveQuotes">
+<wsdl:input message="tns:setCurveQuotes" name="setCurveQuotes"> </wsdl:input>
+<wsdl:output message="tns:setCurveQuotesResponse" name="setCurveQuotesResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCMSUsersByQuery">
+<wsdl:input message="tns:getCMSUsersByQuery" name="getCMSUsersByQuery"> </wsdl:input>
+<wsdl:output message="tns:getCMSUsersByQueryResponse" name="getCMSUsersByQueryResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCurveInstrumentsByQuery">
+<wsdl:input message="tns:getCurveInstrumentsByQuery" name="getCurveInstrumentsByQuery"> </wsdl:input>
+<wsdl:output message="tns:getCurveInstrumentsByQueryResponse" name="getCurveInstrumentsByQueryResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getReferenceEntityReferencesByQuery">
+<wsdl:input message="tns:getReferenceEntityReferencesByQuery" name="getReferenceEntityReferencesByQuery"> </wsdl:input>
+<wsdl:output message="tns:getReferenceEntityReferencesByQueryResponse" name="getReferenceEntityReferencesByQueryResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="setMarketData">
+<wsdl:input message="tns:setMarketData" name="setMarketData"> </wsdl:input>
+<wsdl:output message="tns:setMarketDataResponse" name="setMarketDataResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getIboxxMarkitEODLevels">
+<wsdl:input message="tns:getIboxxMarkitEODLevels" name="getIboxxMarkitEODLevels"> </wsdl:input>
+<wsdl:output message="tns:getIboxxMarkitEODLevelsResponse" name="getIboxxMarkitEODLevelsResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="validateMarketData">
+<wsdl:input message="tns:validateMarketData" name="validateMarketData"> </wsdl:input>
+<wsdl:output message="tns:validateMarketDataResponse" name="validateMarketDataResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="validateCurveNew">
+<wsdl:input message="tns:validateCurveNew" name="validateCurveNew"> </wsdl:input>
+<wsdl:output message="tns:validateCurveNewResponse" name="validateCurveNewResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="defaultMethod">
+<wsdl:input message="tns:defaultMethod" name="defaultMethod"> </wsdl:input>
+<wsdl:output message="tns:defaultMethodResponse" name="defaultMethodResponse"> </wsdl:output>
+</wsdl:operation>
+<wsdl:operation name="getCreditIndexTrancheTermsByQuery">
+<wsdl:input message="tns:getCreditIndexTrancheTermsByQuery" name="getCreditIndexTrancheTermsByQuery"> </wsdl:input>
+<wsdl:output message="tns:getCreditIndexTrancheTermsByQueryResponse" name="getCreditIndexTrancheTermsByQueryResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="setCurveAttributesNew">
+<wsdl:input message="tns:setCurveAttributesNew" name="setCurveAttributesNew"> </wsdl:input>
+<wsdl:output message="tns:setCurveAttributesNewResponse" name="setCurveAttributesNewResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getReferenceEntityById">
+<wsdl:input message="tns:getReferenceEntityById" name="getReferenceEntityById"> </wsdl:input>
+<wsdl:output message="tns:getReferenceEntityByIdResponse" name="getReferenceEntityByIdResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCurvesByQuery">
+<wsdl:input message="tns:getCurvesByQuery" name="getCurvesByQuery"> </wsdl:input>
+<wsdl:output message="tns:getCurvesByQueryResponse" name="getCurvesByQueryResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCreditIndicesByQuery">
+<wsdl:input message="tns:getCreditIndicesByQuery" name="getCreditIndicesByQuery"> </wsdl:input>
+<wsdl:output message="tns:getCreditIndicesByQueryResponse" name="getCreditIndicesByQueryResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="resetClass">
+<wsdl:input message="tns:resetClass" name="resetClass"> </wsdl:input>
+<wsdl:output message="tns:resetClassResponse" name="resetClassResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="setCurveQuotesNew">
+<wsdl:input message="tns:setCurveQuotesNew" name="setCurveQuotesNew"> </wsdl:input>
+<wsdl:output message="tns:setCurveQuotesNewResponse" name="setCurveQuotesNewResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getMarketData">
+<wsdl:input message="tns:getMarketData" name="getMarketData"> </wsdl:input>
+<wsdl:output message="tns:getMarketDataResponse" name="getMarketDataResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCreditView">
+<wsdl:input message="tns:getCreditView" name="getCreditView"> </wsdl:input>
+<wsdl:output message="tns:getCreditViewResponse" name="getCreditViewResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCurveMarkingUsers">
+<wsdl:input message="tns:getCurveMarkingUsers" name="getCurveMarkingUsers"> </wsdl:input>
+<wsdl:output message="tns:getCurveMarkingUsersResponse" name="getCurveMarkingUsersResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCreditIndexComponentsByQuery">
+<wsdl:input message="tns:getCreditIndexComponentsByQuery" name="getCreditIndexComponentsByQuery"> </wsdl:input>
+<wsdl:output message="tns:getCreditIndexComponentsByQueryResponse" name="getCreditIndexComponentsByQueryResponse"> </wsdl:output>
+<wsdl:fault message="tns:Exception" name="Exception"> </wsdl:fault>
+</wsdl:operation>
+</wsdl:portType>
+<wsdl:binding name="CreditMarkingServiceSoapBinding" type="tns:CreditMarkingService">
+<soap:binding style="rpc" transport="http://schemas.xmlsoap.org/soap/http"/>
+<wsdl:operation name="getCreditIndexTransactionTermsByQuery">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getCreditIndexTransactionTermsByQuery">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getCreditIndexTransactionTermsByQueryResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCurveView">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getCurveView">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getCurveViewResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCurveQuotesByQueryNew">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getCurveQuotesByQueryNew">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getCurveQuotesByQueryNewResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="processSQLQuery">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="processSQLQuery">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="processSQLQueryResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCurveQuotesByTag">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getCurveQuotesByTag">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getCurveQuotesByTagResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCurveDataAndTypeByQuery">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getCurveDataAndTypeByQuery">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getCurveDataAndTypeByQueryResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="setCurveAttributes">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="setCurveAttributes">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="setCurveAttributesResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCurveQuotesByQuery">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getCurveQuotesByQuery">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getCurveQuotesByQueryResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="validateCurveQuotesByTag">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="validateCurveQuotesByTag">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="validateCurveQuotesByTagResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCurveViewNew">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getCurveViewNew">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getCurveViewNewResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="setQuotesByTerms">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="setQuotesByTerms">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="setQuotesByTermsResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="validateNewCurve">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="validateNewCurve">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="validateNewCurveResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="refreshCache">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="refreshCache">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="refreshCacheResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="setCurveQuotesByTag">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="setCurveQuotesByTag">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="setCurveQuotesByTagResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getSNMaturityDate">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getSNMaturityDate">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getSNMaturityDateResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="validateCurve">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="validateCurve">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="validateCurveResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getTraderMarkedEligibleQuotes">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getTraderMarkedEligibleQuotes">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getTraderMarkedEligibleQuotesResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCurveEntityDetail">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getCurveEntityDetail">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getCurveEntityDetailResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="validatePartialCurveTree">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="validatePartialCurveTree">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="validatePartialCurveTreeResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="setCurveQuotes">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="setCurveQuotes">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="setCurveQuotesResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCMSUsersByQuery">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getCMSUsersByQuery">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getCMSUsersByQueryResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCurveInstrumentsByQuery">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getCurveInstrumentsByQuery">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getCurveInstrumentsByQueryResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getReferenceEntityReferencesByQuery">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getReferenceEntityReferencesByQuery">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getReferenceEntityReferencesByQueryResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="setMarketData">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="setMarketData">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="setMarketDataResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getIboxxMarkitEODLevels">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getIboxxMarkitEODLevels">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getIboxxMarkitEODLevelsResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="validateMarketData">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="validateMarketData">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="validateMarketDataResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="validateCurveNew">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="validateCurveNew">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="validateCurveNewResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="defaultMethod">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="defaultMethod">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="defaultMethodResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+</wsdl:operation>
+<wsdl:operation name="getCreditIndexTrancheTermsByQuery">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getCreditIndexTrancheTermsByQuery">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getCreditIndexTrancheTermsByQueryResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="setCurveAttributesNew">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="setCurveAttributesNew">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="setCurveAttributesNewResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getReferenceEntityById">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getReferenceEntityById">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getReferenceEntityByIdResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCurvesByQuery">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getCurvesByQuery">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getCurvesByQueryResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCreditIndicesByQuery">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getCreditIndicesByQuery">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getCreditIndicesByQueryResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="resetClass">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="resetClass">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="resetClassResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="setCurveQuotesNew">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="setCurveQuotesNew">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="setCurveQuotesNewResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getMarketData">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getMarketData">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getMarketDataResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCreditView">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getCreditView">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getCreditViewResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCurveMarkingUsers">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getCurveMarkingUsers">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getCurveMarkingUsersResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+<wsdl:operation name="getCreditIndexComponentsByQuery">
+<soap:operation soapAction="" style="rpc"/>
+<wsdl:input name="getCreditIndexComponentsByQuery">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:input>
+<wsdl:output name="getCreditIndexComponentsByQueryResponse">
+<soap:body namespace="http://www.lehman.com/fta/CreditMarkingService" use="literal"/>
+</wsdl:output>
+<wsdl:fault name="Exception">
+<soap:fault name="Exception" use="literal"/>
+</wsdl:fault>
+</wsdl:operation>
+</wsdl:binding>
+<wsdl:service name="CreditMarkingService">
+<wsdl:port binding="tns:CreditMarkingServiceSoapBinding" name="CreditMarkingServicePort">
+<soap:address location="http://cms-lxs.lehman.com/CreditMarkingService/"/>
+</wsdl:port>
+</wsdl:service>
+</wsdl:definitions>
