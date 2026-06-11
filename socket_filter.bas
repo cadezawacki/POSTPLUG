@@ -61,6 +61,7 @@ Public Declare PtrSafe Function WSAStartup Lib "ws2_32.dll" (ByVal wVersionReque
 Public Declare PtrSafe Function connect Lib "ws2_32.dll" (ByVal socket As Long, ByVal SOCKADDR As LongPtr, ByVal namelen As Long) As Long
 Public Declare PtrSafe Sub WSACleanup Lib "ws2_32.dll" ()
 Private Declare PtrSafe Function GetAddrInfo Lib "ws2_32.dll" Alias "getaddrinfo" (ByVal NodeName As String, ByVal ServName As String, ByVal lpHints As LongPtr, lpResult As LongPtr) As Long
+Private Declare PtrSafe Sub FreeAddrInfo Lib "ws2_32.dll" Alias "freeaddrinfo" (ByVal pAddrInfo As LongPtr)
 Public Declare PtrSafe Function ws_socket Lib "ws2_32.dll" Alias "socket" (ByVal AF As Long, ByVal stype As Long, ByVal Protocol As Long) As Long
 Public Declare PtrSafe Function closesocket Lib "ws2_32.dll" (ByVal socket As Long) As Long
 Private Declare PtrSafe Sub CopyMemory Lib "kernel32" Alias "RtlMoveMemory" (Destination As Any, Source As Any, ByVal Length As Long)
@@ -158,6 +159,9 @@ Function Login(id As String, pw As String) As String
         End If
     Loop
 
+    ' getaddrinfo allocates the result chain; it leaks if never freed
+    If pAddrInfo <> 0 Then FreeAddrInfo pAddrInfo
+
     If Not CONNECTED Then
         LogError "Fatal error: unable to connect to the server", WSAGetLastError()
         retVal = closesocket(m_ConnSocket)
@@ -249,13 +253,16 @@ Public Function ConnectToWs() As Boolean
         End If
     Loop
 
+    ' getaddrinfo allocates the result chain; it leaks if never freed
+    If pAddrInfo <> 0 Then FreeAddrInfo pAddrInfo
+
     If Not CONNECTED_ Then
+        ConnectToWs = False
+        CONNECTED = False
         LogError "Fatal error: unable to connect to the server", WSAGetLastError()
         retVal = closesocket(m_ConnSocket)
         Call WSACleanup
         Exit Function
-        ConnectToWs = False
-        CONNECTED = False
     Else
         ConnectToWs = True
         CONNECTED = True

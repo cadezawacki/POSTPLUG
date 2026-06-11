@@ -9,8 +9,16 @@ Sub RemoveHotKeys()
     Call Hotkeys_Unregister(Array("^+m", "^c"))
 End Sub
 
+' Full mode: WebSocket feed + HTTP. Call explicitly when the socket is wanted.
 Public Sub bridge_start()
     modBridge.StartBridge
+    SetupObserver
+End Sub
+
+' HTTP-only mode: async REST via the bridge with NO socket connection.
+' This is the default startup path.
+Public Sub http_start()
+    modBridge.EnsureHttp
     SetupObserver
 End Sub
 
@@ -25,8 +33,8 @@ Private Sub Workbook_Open()
     Set ws = ThisWorkbook.Sheets("Settings")
     
     Call full_recalc
-    Call bridge_start
-    
+    Call http_start
+
 ErrorHandler:
     Call AppState_Restore(state)
 End Sub
@@ -34,6 +42,7 @@ End Sub
 Public Sub bridge_stop()
     modBridge.StopBridge
     modBridge.StopHeartbeat
+    modBridge.DetachBridge   ' stop XLL callbacks into this workbook
     IntersectionObserver.UnregisterAll
 End Sub
 
@@ -57,10 +66,15 @@ ErrorHandler:
 End Sub
 
 Private Sub Workbook_SheetActivate(ByVal Sh As Object)
-    
+
     ' Start clean
     Call AppState_HardFix
-    
+
+    ' Re-bind observer zones to the newly active sheet (zones are registered
+    ' per sheet name; without this they keep pointing at the previous sheet
+    ' until the first edit fires Workbook_SheetChange).
+    Call RegisterObserverZones(Sh)
+
     If Not NamedRangeExistsIn("copy_mode", ActiveSheet) Then Exit Sub
     ActiveSheet.Range("A1:L4").Calculate
     If (ActiveSheet.Range("copy_mode").Value2 = "RUNZ") Then
@@ -72,30 +86,20 @@ Private Sub Workbook_SheetActivate(ByVal Sh As Object)
 End Sub
 
 Private Sub Workbook_SheetChange(ByVal Sh As Object, ByVal Target As Range)
-    
+
     Application.enableEvents = True
     Application.screenUpdating = True
-    
+
     If NamedRangeExistsIn("cms_col", Sh) Then
-        
-        IntersectionObserver.InitializeObserver
-        IntersectionObserver.UnregisterAll
-    
-      ' Link columns A and O together as "ticker_group"
-      IntersectionObserver.RegisterZoneWithCallback "$A$4:$A$184", IgnoreIfRangePassIfSingleCell, _
-          "sdrFilter.SdrFilterTicker", Sh.name, True, "sdrFilter.SdrClearTicker", True, , _
-          "ticker_group"
-      
-      IntersectionObserver.RegisterZoneWithCallback "$O$4:$O$184", IgnoreIfRangePassIfSingleCell, _
-          "sdrFilter.SdrIndirectTicker", Sh.name, False, "sdrFilter.SdrClearTicker", False, , _
-          "ticker_group2"
-          
+
+        Call RegisterObserverZones(Sh)
+
         On Error Resume Next
         Call Intersect_Link(Target, ActiveSheet.Columns(axe_strings_address()), , "refresh_axe_strings")
-        
+
         On Error Resume Next
         Call Intersect_Link(Target, ActiveSheet.Columns([axes_side_col].Column), , "side_validate")
-        
+
         'Call clear_hub(True)
       End If
 End Sub
@@ -104,8 +108,32 @@ Private Sub Workbook_SheetSelectionChange(ByVal Sh As Object, ByVal Target As Ra
     IntersectionObserver.CheckIntersection Target
 End Sub
 
+' Register observer zones at startup so selection-driven callbacks (and the
+' async HTTP POSTs they fire) work immediately - previously zones were only
+' registered after the first cell EDIT on a cms_col sheet.
 Sub SetupObserver()
-  
+    On Error Resume Next
+    Call RegisterObserverZones(ActiveSheet)
+    On Error GoTo 0
+End Sub
+
+' Single source of truth for zone registration (was inlined in
+' Workbook_SheetChange only). Re-binds the zones to the given sheet.
+Public Sub RegisterObserverZones(ByVal Sh As Object)
+    If Sh Is Nothing Then Exit Sub
+    If Not NamedRangeExistsIn("cms_col", Sh) Then Exit Sub
+
+    IntersectionObserver.EnsureInitialized
+    IntersectionObserver.UnregisterAll
+
+    ' Link columns A and O together as "ticker_group"
+    IntersectionObserver.RegisterZoneWithCallback "$A$4:$A$184", IgnoreIfRangePassIfSingleCell, _
+        "sdrFilter.SdrFilterTicker", Sh.name, True, "sdrFilter.SdrClearTicker", True, , _
+        "ticker_group"
+
+    IntersectionObserver.RegisterZoneWithCallback "$O$4:$O$184", IgnoreIfRangePassIfSingleCell, _
+        "sdrFilter.SdrIndirectTicker", Sh.name, False, "sdrFilter.SdrClearTicker", False, , _
+        "ticker_group2"
 End Sub
 
 Function WorksheetExists(shtName As Variant, Optional Wb As Workbook) As Boolean
