@@ -75,6 +75,7 @@ Private gMachineName As String
 
 Private gTenorIndex As Object       ' "5Y" -> 8 etc.
 Private gStore As Object            ' fourTuple -> cCmsCurve (latest known state)
+Private gTickerIndex As Object      ' TICKER -> fourTuple key (one curve per ticker)
 Private gActiveBatches As Collection ' in-flight cCmsBatch objects (kept alive + inspectable)
 Private gLastBatch As cCmsBatch     ' most recently launched batch (kept after completion)
 
@@ -265,6 +266,7 @@ Public Function CMS_Diag() As String
     s = s & "bridge loaded=" & modBridge.AddinLoaded() & _
         "; last dispatch error=" & modBridge.BridgeLastDispatchError() & vbNewLine
     s = s & "store curves=" & CMS_Store().Count & _
+        "; pending 5Y=" & CMS_PendingCount() & _
         "; deliveries=" & gDeliveryCount & _
         "; watchdog flushes=" & gWatchdogFlushCount & vbNewLine
     s = s & "active batches=" & CMS_ActiveBatchCount()
@@ -375,10 +377,14 @@ End Function
 ' =============================================================================
 
 ' ---------------------------------------------------------------------------
-' Bulk async GET. FiveTuples: a Range or 2D array with columns
-' Ticker, Ccy, DebtClass, Product, QuoteConvention (e.g. D9:H450 or a subset).
+' Bulk async GET. FiveTuples accepts any curve spec:
+'   - Range/2D array, 5 cols: Ticker, Ccy, DebtClass, Product, QuoteConvention
+'     (e.g. D9:H450; identities are registered for later ticker-only use)
+'   - Range/2D array, 1 col : registered tickers or fourTuple keys
+'   - a single ticker/key string
 ' Blank-ticker rows are skipped; duplicates collapse onto one request but
-' still appear row-for-row in batch.ToArray().
+' still appear row-for-row in batch.ToArray(). Unregistered tickers raise
+' before anything is sent.
 '
 '   OnCurve    : "Module.Sub" with signature (curve As cCmsCurve, batch As cCmsBatch)
 '   OnAllDone  : "Module.Sub" with signature (batch As cCmsBatch)
@@ -428,7 +434,8 @@ End Function
 ' Bulk async SET ("CMS_SetBulkCurveQuoteData" - the call that never existed).
 ' One HTTP request per curve, all in flight at once.
 '
-'   FiveTuples : as above (N rows)
+'   FiveTuples : any curve spec (5-col tuples, 1-col registered tickers/keys,
+'                or a single ticker string) - N rows
 '   Quotes     : 2D array/Range, N rows x 12 columns (SET tenor order
 '                0M 3M 6M 9M 1Y 2Y 3Y 4Y 5Y 6Y 7Y 10Y) or N x 17 columns
 '                (17-standard order; the 8Y/9Y/15Y/20Y/30Y columns are ignored).
@@ -496,9 +503,10 @@ End Function
 ' The perturbation workflow: re-mark curves off a new 5Y level, computing the
 ' rest of the curve in memory from the last GET (no sheet round trip).
 '
-'   KeysAndNew5y : 2D array/Range, N rows x 2: (fourTuple key, new 5Y level)
-'                  Keys are TICKER.CCY.DEBTCLASS.PRODUCT - cCmsCurve.Key.
-'                  Curves must already be in the store (i.e. GET them first).
+'   KeysAndNew5y : 2D array/Range, N rows x 2: (ticker OR fourTuple key,
+'                  new 5Y level). Tickers must be registered (raises before
+'                  anything is sent); curves must have been GETted so the
+'                  cached quotes can drive the transform.
 ' ---------------------------------------------------------------------------
 Public Function CMS_SetCurves5yAsync(ByVal KeysAndNew5y As Variant, _
                                      Optional ByVal OnCurve As String = "", _
@@ -522,9 +530,19 @@ Public Function CMS_SetCurves5yAsync(ByVal KeysAndNew5y As Variant, _
     n = UBound(arr, 1) - LBound(arr, 1) + 1
     ReDim rowKeys(0 To n - 1)
 
+    ' Resolution pre-pass: tickers -> keys, raising for unregistered tickers
+    ' BEFORE any request is launched.
     For i = 0 To n - 1
-        Key = UCase$(Trim$(CStr(arr(LBound(arr, 1) + i, LBound(arr, 2)))))
-        rowKeys(i) = Key
+        Key = Trim$(NzStr(arr(LBound(arr, 1) + i, LBound(arr, 2))))
+        If Len(Key) = 0 Then
+            rowKeys(i) = ""
+        Else
+            rowKeys(i) = CMS_ResolveKey(Key)
+        End If
+    Next i
+
+    For i = 0 To n - 1
+        Key = CStr(rowKeys(i))
         If Len(Key) = 0 Then GoTo NextRow
 
         Set cv = New cCmsCurve
@@ -569,19 +587,77 @@ End Function
 
 ' ---------------------------------------------------------------------------
 ' Async refresh of a single curve (returns the batch; result via callbacks
-' or batch.Curve(key) after batch.IsDone).
+' or batch.Curve(key) after batch.IsDone). Identity parts beyond Ticker are
+' optional: omit them to use the registered identity for that ticker.
 ' ---------------------------------------------------------------------------
-Public Function CMS_GetCurveAsync(ByVal Ticker As String, ByVal Ccy As String, _
-                                  ByVal DebtClass As String, ByVal Product As String, _
-                                  Optional ByVal QuoteConvention As String = "SPREADS", _
+Public Function CMS_GetCurveAsync(ByVal Ticker As String, _
+                                  Optional ByVal Ccy As String = "", _
+                                  Optional ByVal DebtClass As String = "", _
+                                  Optional ByVal Product As String = "", _
+                                  Optional ByVal QuoteConvention As String = "", _
                                   Optional ByVal Tag As String = CMS_TAG_LIVE, _
                                   Optional ByVal QuoteDate As Date, _
                                   Optional ByVal OnCurve As String = "", _
                                   Optional ByVal OnAllDone As String = "") As cCmsBatch
+    Dim idc As cCmsCurve
     Dim tuples(0 To 0, 0 To 4) As Variant
-    tuples(0, 0) = Ticker: tuples(0, 1) = Ccy: tuples(0, 2) = DebtClass
-    tuples(0, 3) = Product: tuples(0, 4) = QuoteConvention
+    Set idc = BuildIdentity(Ticker, Ccy, DebtClass, Product, QuoteConvention)
+    tuples(0, 0) = idc.Ticker: tuples(0, 1) = idc.Ccy: tuples(0, 2) = idc.DebtClass
+    tuples(0, 3) = idc.Product: tuples(0, 4) = idc.QuoteConvention
     Set CMS_GetCurveAsync = CMS_GetCurvesAsync(tuples, Tag, QuoteDate, OnCurve, OnAllDone)
+End Function
+
+' ---------------------------------------------------------------------------
+' Async SET of a single curve. TermQuotes: 12 values in SET-tenor order or a
+' 17-grid row (Range / 1D / 2D; columns or transposed both fine). Identity
+' parts optional - ticker-only works for registered curves.
+' ---------------------------------------------------------------------------
+Public Function CMS_SetCurveAsync(ByVal Ticker As String, ByVal TermQuotes As Variant, _
+                                  Optional ByVal Ccy As String = "", _
+                                  Optional ByVal DebtClass As String = "", _
+                                  Optional ByVal Product As String = "", _
+                                  Optional ByVal RecoveryRate As Double = 0, _
+                                  Optional ByVal QuoteConvention As String = "", _
+                                  Optional ByVal OnCurve As String = "", _
+                                  Optional ByVal OnAllDone As String = "", _
+                                  Optional ByVal TimeoutMs As Long = DEFAULT_TIMEOUT_MS) As cCmsBatch
+    Dim idc As cCmsCurve
+    Dim tuples(0 To 0, 0 To 4) As Variant
+    Dim recs(0 To 0, 0 To 0) As Variant
+    Set idc = BuildIdentity(Ticker, Ccy, DebtClass, Product, QuoteConvention)
+    tuples(0, 0) = idc.Ticker: tuples(0, 1) = idc.Ccy: tuples(0, 2) = idc.DebtClass
+    tuples(0, 3) = idc.Product: tuples(0, 4) = idc.QuoteConvention
+    recs(0, 0) = RecoveryRate
+    Set CMS_SetCurveAsync = CMS_SetCurvesAsync(tuples, RowToArray2D(TermQuotes), recs, _
+                                               OnCurve, OnAllDone, TimeoutMs)
+End Function
+
+' ---------------------------------------------------------------------------
+' Async 5Y re-mark of a single registered curve (store-cached quotes drive
+' the rest of the curve).
+' ---------------------------------------------------------------------------
+Public Function CMS_SetCurve5yAsync(ByVal TickerOrKey As String, ByVal New5y As Double, _
+                                    Optional ByVal OnCurve As String = "", _
+                                    Optional ByVal OnAllDone As String = "", _
+                                    Optional ByVal TimeoutMs As Long = DEFAULT_TIMEOUT_MS) As cCmsBatch
+    Dim arr(0 To 0, 0 To 1) As Variant
+    arr(0, 0) = TickerOrKey: arr(0, 1) = New5y
+    Set CMS_SetCurve5yAsync = CMS_SetCurves5yAsync(arr, OnCurve, OnAllDone, TimeoutMs)
+End Function
+
+' ---------------------------------------------------------------------------
+' Ticker-list GET that tolerates any shape (1D array, horizontal row,
+' vertical column) - normalizes to the 1-column ticker spec.
+' ---------------------------------------------------------------------------
+Public Function CMS_GetTickersAsync(ByVal Tickers As Variant, _
+                                    Optional ByVal Tag As String = CMS_TAG_LIVE, _
+                                    Optional ByVal QuoteDate As Date, _
+                                    Optional ByVal OnCurve As String = "", _
+                                    Optional ByVal OnAllDone As String = "", _
+                                    Optional ByVal CurvesPerRequest As Long = 1, _
+                                    Optional ByVal TimeoutMs As Long = DEFAULT_TIMEOUT_MS) As cCmsBatch
+    Set CMS_GetTickersAsync = CMS_GetCurvesAsync(ToTickerColumn(Tickers), Tag, QuoteDate, _
+                                                 OnCurve, OnAllDone, CurvesPerRequest, TimeoutMs)
 End Function
 
 ' =============================================================================
@@ -590,24 +666,22 @@ End Function
 ' =============================================================================
 
 ' One curve -> 1D Variant(0..24): 17 tenor quotes + 8 scalars.
-Public Function CMS_GetCurveQuoteData(ByVal Ticker As String, ByVal Ccy As String, _
-                                      ByVal DebtClass As String, _
+' Ccy/DebtClass are optional: CMS_GetCurveQuoteData("AEP") works once the
+' ticker is registered (legacy positional calls are unchanged).
+Public Function CMS_GetCurveQuoteData(ByVal Ticker As String, _
+                                      Optional ByVal Ccy As String = "", _
+                                      Optional ByVal DebtClass As String = "", _
                                       Optional ByVal Product As String = "DERIV", _
                                       Optional ByVal Tag As String = CMS_TAG_LIVE, _
                                       Optional ByVal QuoteDate As Date, _
-                                      Optional ByVal QuoteConvention As String = "SPREADS", _
+                                      Optional ByVal QuoteConvention As String = "", _
                                       Optional ByVal TimeoutMs As Long = DEFAULT_TIMEOUT_MS) As Variant
     Dim batch As cCmsBatch
-    Dim cv As cCmsCurve
     Set batch = CMS_GetCurveAsync(Ticker, Ccy, DebtClass, Product, QuoteConvention, Tag, QuoteDate)
     If Not batch.WaitAll(TimeoutMs) Then
         Err.Raise vbObjectError + 603, "modCms.CMS_GetCurveQuoteData", "Timed out waiting for CMS"
     End If
-    Set cv = batch.Curve(CMS_CompileFourTuple(Ticker, Ccy, DebtClass, Product))
-    If cv Is Nothing Then
-        Err.Raise vbObjectError + 604, "modCms.CMS_GetCurveQuoteData", "Invalid curve identifiers"
-    End If
-    CMS_GetCurveQuoteData = cv.ToRow()
+    CMS_GetCurveQuoteData = SingleBatchRow(batch, "modCms.CMS_GetCurveQuoteData")
 End Function
 
 ' Bulk GET -> 2D Variant (one row per input row, 25 columns).
@@ -624,28 +698,43 @@ Public Function CMS_GetBulkCurveQuoteData(ByVal FiveTuples As Variant, _
     CMS_GetBulkCurveQuoteData = batch.ToArray(False)
 End Function
 
-' One curve SET -> echoed row (legacy CMS_SetCurveQuoteData shape).
+' One curve SET -> echoed row (legacy CMS_SetCurveQuoteData shape/order).
 Public Function CMS_SetCurveQuoteData(ByVal Ticker As String, ByVal Ccy As String, _
                                       ByVal DebtClass As String, ByVal Product As String, _
                                       ByVal TermQuotes As Variant, _
                                       Optional ByVal RecoveryRate As Double = 0, _
                                       Optional ByVal QuoteConvention As String = "SPREADS", _
                                       Optional ByVal TimeoutMs As Long = DEFAULT_TIMEOUT_MS) As Variant
-    Dim tuples(0 To 0, 0 To 4) As Variant
-    Dim quotes As Variant
-    Dim recs(0 To 0, 0 To 0) As Variant
     Dim batch As cCmsBatch
-
-    tuples(0, 0) = Ticker: tuples(0, 1) = Ccy: tuples(0, 2) = DebtClass
-    tuples(0, 3) = Product: tuples(0, 4) = QuoteConvention
-    quotes = RowToArray2D(TermQuotes)
-    recs(0, 0) = RecoveryRate
-
-    Set batch = CMS_SetCurvesAsync(tuples, quotes, recs)
+    Set batch = CMS_SetCurveAsync(Ticker, TermQuotes, Ccy, DebtClass, Product, _
+                                  RecoveryRate, QuoteConvention)
     If Not batch.WaitAll(TimeoutMs) Then
         Err.Raise vbObjectError + 603, "modCms.CMS_SetCurveQuoteData", "Timed out waiting for CMS"
     End If
-    CMS_SetCurveQuoteData = batch.Curve(CMS_CompileFourTuple(Ticker, Ccy, DebtClass, Product)).ToRow()
+    CMS_SetCurveQuoteData = SingleBatchRow(batch, "modCms.CMS_SetCurveQuoteData")
+End Function
+
+' Ticker-only blocking SET (the legacy signature can't take optional middle
+' args). TermQuotes: 12 SET-tenor values or a 17-grid row.
+Public Function CMS_SetTickerQuoteData(ByVal TickerOrKey As String, ByVal TermQuotes As Variant, _
+                                       Optional ByVal RecoveryRate As Double = 0, _
+                                       Optional ByVal TimeoutMs As Long = DEFAULT_TIMEOUT_MS) As Variant
+    Dim batch As cCmsBatch
+    Set batch = CMS_SetCurveAsync(TickerOrKey, TermQuotes, , , , RecoveryRate)
+    If Not batch.WaitAll(TimeoutMs) Then
+        Err.Raise vbObjectError + 603, "modCms.CMS_SetTickerQuoteData", "Timed out waiting for CMS"
+    End If
+    CMS_SetTickerQuoteData = SingleBatchRow(batch, "modCms.CMS_SetTickerQuoteData")
+End Function
+
+' Result row of a single-curve batch (the key may have come from the registry).
+Private Function SingleBatchRow(ByVal Batch As cCmsBatch, ByVal Caller As String) As Variant
+    Dim ks As Variant
+    ks = Batch.Keys()
+    If UBound(ks) < LBound(ks) Then
+        Err.Raise vbObjectError + 604, Caller, "Invalid curve identifiers"
+    End If
+    SingleBatchRow = Batch.Curve(CStr(ks(LBound(ks)))).ToRow()
 End Function
 
 ' Bulk SET, blocking variant -> 2D result array. For the non-blocking version
@@ -683,6 +772,7 @@ End Function
 
 Public Sub StoreUpsert(ByVal Curve As cCmsCurve)
     Set CMS_Store()(Curve.Key) = Curve
+    IndexTicker Curve
 End Sub
 
 ' After a successful SET: the response echoes the 12 sent tenors verbatim.
@@ -730,7 +820,7 @@ Public Function CMS_StoreToArray(Optional ByVal Keys As Variant, _
     End If
 
     base = IIf(IncludeHeader, 1, 0)
-    ReDim out(0 To UBound(useKeys) - LBound(useKeys) + base, 0 To 25)
+    ReDim out(0 To UBound(useKeys) - LBound(useKeys) + base, 0 To 26)
 
     If IncludeHeader Then
         out(0, 0) = "Curve"
@@ -738,6 +828,7 @@ Public Function CMS_StoreToArray(Optional ByVal Keys As Variant, _
         For j = 0 To 24
             out(0, j + 1) = header(j)
         Next j
+        out(0, 26) = "Pending 5Y"
     End If
 
     For i = 0 To UBound(useKeys) - LBound(useKeys)
@@ -748,6 +839,7 @@ Public Function CMS_StoreToArray(Optional ByVal Keys As Variant, _
             For j = 0 To 24
                 out(i + base, j + 1) = rowData(j)
             Next j
+            out(i + base, 26) = gStore(k).Pending5y
         End If
     Next i
     CMS_StoreToArray = out
@@ -760,6 +852,289 @@ Public Sub CMS_WriteBatchToRange(ByVal Batch As cCmsBatch, ByVal TopLeft As Rang
     arr = Batch.ToArray(IncludeHeader)
     TopLeft.Resize(UBound(arr, 1) + 1, UBound(arr, 2) + 1).Value2 = arr
 End Sub
+
+' =============================================================================
+'  REGISTRATION & TICKER-ONLY ACCESS
+'  One curve per unique ticker: registering (explicitly, or implicitly by
+'  GETting/SETting with the full tuple) maps TICKER -> fourTuple key, after
+'  which every get/set/store call accepts just the ticker.
+' =============================================================================
+
+' Register one curve's identity so it can be referenced by ticker alone.
+' Does NOT overwrite an already-stored curve's quotes.
+Public Sub register_curve(ByVal Ticker As String, ByVal Ccy As String, _
+                          ByVal DebtClass As String, ByVal Product As String, _
+                          Optional ByVal QuoteConvention As String = "SPREADS")
+    Dim cv As New cCmsCurve
+    cv.Init Ticker, Ccy, DebtClass, Product, QuoteConvention
+    RegisterIdentity cv
+End Sub
+
+' Register a block of curves from a Range/2D array with the usual 5 columns
+' (Ticker, Ccy, DebtClass, Product, QuoteConvention). Blank rows are skipped.
+Public Sub register_curve_by_range(ByVal FiveTuples As Variant)
+    Dim arr As Variant
+    Dim r As Long, c0 As Long
+    Dim Ticker As String
+
+    arr = ToArray2D(FiveTuples)
+    If UBound(arr, 2) - LBound(arr, 2) + 1 < 5 Then
+        Err.Raise vbObjectError + 640, "modCms.register_curve_by_range", _
+            "Range must have 5 columns: Ticker, Ccy, DebtClass, Product, QuoteConvention"
+    End If
+    c0 = LBound(arr, 2)
+    For r = LBound(arr, 1) To UBound(arr, 1)
+        Ticker = Trim$(NzStr(arr(r, c0)))
+        If Len(Ticker) > 0 And Ticker <> "0" Then
+            register_curve Ticker, NzStr(arr(r, c0 + 1)), NzStr(arr(r, c0 + 2)), _
+                           NzStr(arr(r, c0 + 3)), NzStr(arr(r, c0 + 4))
+        End If
+    Next r
+End Sub
+
+' "AEP" -> "AEP.USD.SENIOR_NORE_14.SNAC100" (anything containing "." is
+' treated as a full fourTuple key and passed through). Raises if the ticker
+' has never been registered.
+Public Function CMS_ResolveKey(ByVal TickerOrKey As String) As String
+    Dim s As String
+    s = UCase$(Trim$(TickerOrKey))
+    If Len(s) = 0 Then
+        Err.Raise vbObjectError + 641, "modCms.CMS_ResolveKey", "Empty ticker/key"
+    End If
+    If InStr(1, s, ".") > 0 Then
+        CMS_ResolveKey = s
+        Exit Function
+    End If
+    If Not gTickerIndex Is Nothing Then
+        If gTickerIndex.Exists(s) Then
+            CMS_ResolveKey = gTickerIndex(s)
+            Exit Function
+        End If
+    End If
+    Err.Raise vbObjectError + 642, "modCms.CMS_ResolveKey", _
+        "Ticker '" & s & "' is not registered. Call register_curve / " & _
+        "register_curve_by_range, or GET it once with the full tuple."
+End Function
+
+' Stored curve by ticker or key (Nothing if registered key has gone missing).
+Public Function CMS_GetStored(ByVal TickerOrKey As String) As cCmsCurve
+    Set CMS_GetStored = StoreGet(CMS_ResolveKey(TickerOrKey))
+End Function
+
+' Like CMS_GetStored but raises instead of returning Nothing.
+Private Function RequireStored(ByVal TickerOrKey As String) As cCmsCurve
+    Dim Key As String
+    Key = CMS_ResolveKey(TickerOrKey)
+    Set RequireStored = StoreGet(Key)
+    If RequireStored Is Nothing Then
+        Err.Raise vbObjectError + 643, "modCms.RequireStored", _
+            "Curve '" & Key & "' is not in the store - GET it or register it first."
+    End If
+End Function
+
+' Identity from explicit parts, or from the registry when only Ticker is
+' given (Ccy AND DebtClass empty). Explicit parts also register the identity.
+Private Function BuildIdentity(ByVal Ticker As String, ByVal Ccy As String, _
+                               ByVal DebtClass As String, ByVal Product As String, _
+                               ByVal QuoteConvention As String) As cCmsCurve
+    Dim cv As New cCmsCurve
+    Dim stored As cCmsCurve
+    Dim Key As String
+
+    If Len(Trim$(Ccy)) = 0 And Len(Trim$(DebtClass)) = 0 Then
+        ' Ticker-only (or raw fourTuple key)
+        Key = CMS_ResolveKey(Ticker)
+        Set stored = StoreGet(Key)
+        If stored Is Nothing Then
+            ParseKeyInto Key, cv
+            If Len(QuoteConvention) > 0 Then cv.QuoteConvention = UCase$(QuoteConvention)
+        Else
+            cv.Init stored.Ticker, stored.Ccy, stored.DebtClass, stored.Product, _
+                    IIf(Len(QuoteConvention) > 0, QuoteConvention, stored.QuoteConvention)
+            cv.LabelOverride = stored.LabelOverride
+        End If
+    ElseIf Len(Trim$(Ccy)) = 0 Or Len(Trim$(DebtClass)) = 0 Or Len(Trim$(Product)) = 0 Then
+        Err.Raise vbObjectError + 644, "modCms.BuildIdentity", _
+            "Provide either the Ticker alone (registered curve) or the full Ticker/Ccy/DebtClass/Product"
+    Else
+        If Len(QuoteConvention) = 0 Then QuoteConvention = "SPREADS"
+        cv.Init Ticker, Ccy, DebtClass, Product, QuoteConvention
+        RegisterIdentity cv
+    End If
+    Set BuildIdentity = cv
+End Function
+
+' Identity-only registration: keep an existing stored curve (and its quotes),
+' just make sure the ticker index points at it.
+Private Sub RegisterIdentity(ByVal Curve As cCmsCurve)
+    If CMS_Store().Exists(Curve.Key) Then
+        IndexTicker gStore(Curve.Key)
+    Else
+        StoreUpsert Curve
+    End If
+End Sub
+
+Private Sub IndexTicker(ByVal Curve As cCmsCurve)
+    If gTickerIndex Is Nothing Then
+        Set gTickerIndex = CreateObject("Scripting.Dictionary")
+        gTickerIndex.CompareMode = vbTextCompare
+    End If
+    If gTickerIndex.Exists(Curve.Ticker) Then
+        If StrComp(CStr(gTickerIndex(Curve.Ticker)), Curve.Key, vbTextCompare) <> 0 Then
+            Debug.Print "modCms: ticker '" & Curve.Ticker & "' remapped " & _
+                        gTickerIndex(Curve.Ticker) & " -> " & Curve.Key
+        End If
+        gTickerIndex(Curve.Ticker) = Curve.Key
+    Else
+        gTickerIndex.Add Curve.Ticker, Curve.Key
+    End If
+End Sub
+
+' =============================================================================
+'  CURVE ANALYTICS (off the store - no I/O)
+'  Unregistered tickers raise; missing quotes return Empty.
+' =============================================================================
+
+Public Function CMS_Quote(ByVal TickerOrKey As String, _
+                          Optional ByVal Tenor As String = "5Y") As Variant
+    CMS_Quote = RequireStored(TickerOrKey).Quote(Tenor)
+End Function
+
+' Slope between two tenors of one curve: Quote(TenorB) - Quote(TenorA).
+' Default is the 5s10s: CMS_CurveDiff("AEP") = 10Y - 5Y.
+Public Function CMS_CurveDiff(ByVal TickerOrKey As String, _
+                              Optional ByVal TenorA As String = "5Y", _
+                              Optional ByVal TenorB As String = "10Y") As Variant
+    Dim cv As cCmsCurve
+    Dim a As Variant, b As Variant
+    Set cv = RequireStored(TickerOrKey)
+    a = cv.Quote(TenorA): b = cv.Quote(TenorB)
+    If IsEmpty(a) Or IsEmpty(b) Then Exit Function
+    CMS_CurveDiff = CDbl(b) - CDbl(a)
+End Function
+
+' Ratio between two tenors of one curve: Quote(TenorB) / Quote(TenorA).
+Public Function CMS_CurveRatio(ByVal TickerOrKey As String, _
+                               Optional ByVal TenorA As String = "5Y", _
+                               Optional ByVal TenorB As String = "10Y") As Variant
+    Dim cv As cCmsCurve
+    Dim a As Variant, b As Variant
+    Set cv = RequireStored(TickerOrKey)
+    a = cv.Quote(TenorA): b = cv.Quote(TenorB)
+    If IsEmpty(a) Or IsEmpty(b) Then Exit Function
+    If CDbl(a) = 0 Then Exit Function
+    CMS_CurveRatio = CDbl(b) / CDbl(a)
+End Function
+
+' Spread between two tickers at one tenor: QuoteA - QuoteB.
+Public Function CMS_TickerDiff(ByVal TickerA As String, ByVal TickerB As String, _
+                               Optional ByVal Tenor As String = "5Y") As Variant
+    Dim a As Variant, b As Variant
+    a = RequireStored(TickerA).Quote(Tenor)
+    b = RequireStored(TickerB).Quote(Tenor)
+    If IsEmpty(a) Or IsEmpty(b) Then Exit Function
+    CMS_TickerDiff = CDbl(a) - CDbl(b)
+End Function
+
+' Ratio between two tickers at one tenor: QuoteA / QuoteB.
+Public Function CMS_TickerRatio(ByVal TickerA As String, ByVal TickerB As String, _
+                                Optional ByVal Tenor As String = "5Y") As Variant
+    Dim a As Variant, b As Variant
+    a = RequireStored(TickerA).Quote(Tenor)
+    b = RequireStored(TickerB).Quote(Tenor)
+    If IsEmpty(a) Or IsEmpty(b) Then Exit Function
+    If CDbl(b) = 0 Then Exit Function
+    CMS_TickerRatio = CDbl(a) / CDbl(b)
+End Function
+
+' =============================================================================
+'  PENDING 5Y LEVELS
+'  Stage amended 5Y marks on the cached curves (e.g. from a sheet-change
+'  handler), then drain them all into one async SET when the user presses
+'  the mark button. No cell re-reads needed at mark time.
+' =============================================================================
+
+' Stage (or restage) a pending 5Y level on a registered curve.
+Public Sub CMS_StagePending5y(ByVal TickerOrKey As String, ByVal Level As Double)
+    RequireStored(TickerOrKey).Pending5y = Level
+End Sub
+
+' Un-stage a pending level (user deleted their amend). Returns the cached
+' ORIGINAL 5Y so the caller can restore it into the cell (Empty if the curve
+' was never fetched).
+Public Function CMS_ClearPending5y(ByVal TickerOrKey As String) As Variant
+    Dim cv As cCmsCurve
+    Set cv = RequireStored(TickerOrKey)
+    cv.Pending5y = Empty
+    CMS_ClearPending5y = cv.Quotes(CMS_IDX_5Y)
+End Function
+
+Public Function CMS_Pending5y(ByVal TickerOrKey As String) As Variant
+    CMS_Pending5y = RequireStored(TickerOrKey).Pending5y
+End Function
+
+Public Function CMS_HasPending(ByVal TickerOrKey As String) As Boolean
+    CMS_HasPending = Not IsEmpty(RequireStored(TickerOrKey).Pending5y)
+End Function
+
+' Keys of every curve with a staged level (0-based array; empty array if none).
+Public Function CMS_PendingKeys() As Variant
+    Dim k As Variant
+    Dim out() As Variant
+    Dim n As Long
+    ReDim out(0 To CMS_Store().Count)   ' upper bound; trimmed below
+    For Each k In gStore.Keys
+        If Not IsEmpty(gStore(k).Pending5y) Then
+            out(n) = k
+            n = n + 1
+        End If
+    Next k
+    If n = 0 Then
+        CMS_PendingKeys = Array()
+    Else
+        ReDim Preserve out(0 To n - 1)
+        CMS_PendingKeys = out
+    End If
+End Function
+
+Public Function CMS_PendingCount() As Long
+    Dim k As Variant
+    For Each k In CMS_Store().Keys
+        If Not IsEmpty(gStore(k).Pending5y) Then CMS_PendingCount = CMS_PendingCount + 1
+    Next k
+End Function
+
+Public Sub CMS_ClearAllPending()
+    Dim k As Variant
+    For Each k In CMS_Store().Keys
+        gStore(k).Pending5y = Empty
+    Next k
+End Sub
+
+' Drain: SET every staged curve off its pending 5Y (full curve computed from
+' the cached quotes), clearing the staged levels as they are consumed.
+' Returns Nothing when nothing is staged.
+Public Function CMS_MarkPendingAsync(Optional ByVal OnCurve As String = "", _
+                                     Optional ByVal OnAllDone As String = "", _
+                                     Optional ByVal TimeoutMs As Long = DEFAULT_TIMEOUT_MS) As cCmsBatch
+    Dim Keys As Variant
+    Dim arr() As Variant
+    Dim i As Long
+    Dim cv As cCmsCurve
+
+    Keys = CMS_PendingKeys()
+    If UBound(Keys) - LBound(Keys) + 1 <= 0 Then Exit Function   ' nothing staged
+
+    ReDim arr(0 To UBound(Keys) - LBound(Keys), 0 To 1)
+    For i = 0 To UBound(Keys) - LBound(Keys)
+        Set cv = gStore(CStr(Keys(LBound(Keys) + i)))
+        arr(i, 0) = cv.Key
+        arr(i, 1) = cv.Pending5y
+        cv.Pending5y = Empty
+    Next i
+
+    Set CMS_MarkPendingAsync = CMS_SetCurves5yAsync(arr, OnCurve, OnAllDone, TimeoutMs)
+End Function
 
 ' =============================================================================
 '  REQUEST CONSTRUCTION
@@ -1255,45 +1630,80 @@ End Sub
 '  INPUT NORMALIZATION
 ' =============================================================================
 
-' FiveTuples (Range / 2D array, cols Ticker,Ccy,DebtClass,Product,QuoteConvention)
-' -> Collection of NEW cCmsCurve registered on the batch. RowKeys mirrors the
-' input rows ("" for blank/short rows, the shared key for duplicates).
-Private Function NormalizeFiveTuples(ByVal FiveTuples As Variant, ByVal Batch As cCmsBatch, _
+' CurveSpec -> Collection of NEW cCmsCurve registered on the batch.
+' Accepts, per row:
+'   - 5+ columns : full tuple (Ticker,Ccy,DebtClass,Product,QuoteConvention);
+'                  each identity is registered for later ticker-only use
+'   - 1 column   : ticker (must be registered - raises otherwise, before
+'                  anything is sent) or full fourTuple key
+'   - a bare String / single cell counts as a 1-column ticker spec
+' RowKeys mirrors the input rows ("" for blank rows, the shared key for
+' duplicates). NOTE: ticker LISTS must be vertical (1 column).
+Private Function NormalizeFiveTuples(ByVal CurveSpec As Variant, ByVal Batch As cCmsBatch, _
                                      ByRef RowKeys As Variant) As Collection
     Dim arr As Variant
     Dim out As New Collection
     Dim cv As cCmsCurve
+    Dim stored As cCmsCurve
     Dim r As Long, c0 As Long
-    Dim n As Long
+    Dim n As Long, nCols As Long
     Dim Keys() As Variant
     Dim Ticker As String
+    Dim s As String, Key As String
 
-    arr = ToArray2D(FiveTuples)
-    If UBound(arr, 2) - LBound(arr, 2) + 1 < 5 Then
-        Err.Raise vbObjectError + 620, "modCms", _
-            "FiveTuples must have 5 columns: Ticker, Ccy, DebtClass, Product, QuoteConvention"
-    End If
-
+    arr = ToArray2D(CurveSpec)
     n = UBound(arr, 1) - LBound(arr, 1) + 1
+    nCols = UBound(arr, 2) - LBound(arr, 2) + 1
     c0 = LBound(arr, 2)
     ReDim Keys(0 To n - 1)
 
-    For r = 0 To n - 1
-        Ticker = Trim$(CStr(NzStr(arr(LBound(arr, 1) + r, c0))))
-        If Len(Ticker) = 0 Or Ticker = "0" Then
-            Keys(r) = ""
-        Else
-            Set cv = New cCmsCurve
-            cv.Init Ticker, _
-                    CStr(NzStr(arr(LBound(arr, 1) + r, c0 + 1))), _
-                    CStr(NzStr(arr(LBound(arr, 1) + r, c0 + 2))), _
-                    CStr(NzStr(arr(LBound(arr, 1) + r, c0 + 3))), _
-                    CStr(NzStr(arr(LBound(arr, 1) + r, c0 + 4)))
-            Keys(r) = cv.Key
-            If Batch.AddCurve(cv) Then out.Add cv
-            ' duplicates: row keeps the key, request sent once
-        End If
-    Next r
+    If nCols >= 5 Then
+        ' Full five-tuple rows
+        For r = 0 To n - 1
+            Ticker = Trim$(NzStr(arr(LBound(arr, 1) + r, c0)))
+            If Len(Ticker) = 0 Or Ticker = "0" Then
+                Keys(r) = ""
+            Else
+                Set cv = New cCmsCurve
+                cv.Init Ticker, _
+                        NzStr(arr(LBound(arr, 1) + r, c0 + 1)), _
+                        NzStr(arr(LBound(arr, 1) + r, c0 + 2)), _
+                        NzStr(arr(LBound(arr, 1) + r, c0 + 3)), _
+                        NzStr(arr(LBound(arr, 1) + r, c0 + 4))
+                RegisterIdentity cv
+                Keys(r) = cv.Key
+                If Batch.AddCurve(cv) Then out.Add cv
+                ' duplicates: row keeps the key, request sent once
+            End If
+        Next r
+
+    ElseIf nCols = 1 Then
+        ' Ticker / fourTuple-key rows resolved against the registry
+        For r = 0 To n - 1
+            s = Trim$(NzStr(arr(LBound(arr, 1) + r, c0)))
+            If Len(s) = 0 Or s = "0" Then
+                Keys(r) = ""
+            Else
+                Key = CMS_ResolveKey(s)   ' raises for unregistered tickers
+                Set cv = New cCmsCurve
+                Set stored = StoreGet(Key)
+                If stored Is Nothing Then
+                    ParseKeyInto Key, cv  ' raw key that was never stored
+                Else
+                    cv.Init stored.Ticker, stored.Ccy, stored.DebtClass, _
+                            stored.Product, stored.QuoteConvention
+                    cv.LabelOverride = stored.LabelOverride
+                End If
+                Keys(r) = cv.Key
+                If Batch.AddCurve(cv) Then out.Add cv
+            End If
+        Next r
+
+    Else
+        Err.Raise vbObjectError + 620, "modCms", _
+            "CurveSpec must have 5 columns (Ticker,Ccy,DebtClass,Product,QuoteConvention) " & _
+            "or 1 column (registered tickers / fourTuple keys); got " & nCols & " columns"
+    End If
 
     RowKeys = Keys
     Set NormalizeFiveTuples = out
@@ -1387,6 +1797,28 @@ Private Function ToArray2D(ByVal v As Variant) As Variant
             out(0, i) = v(LBound(v) + i)
         Next i
         ToArray2D = out
+    End If
+End Function
+
+' Any shape of ticker list (scalar, 1D array, row, column) -> N x 1 2D array
+Private Function ToTickerColumn(ByVal v As Variant) As Variant
+    Dim arr As Variant
+    Dim out() As Variant
+    Dim i As Long, n As Long
+    arr = ToArray2D(v)
+    If UBound(arr, 2) - LBound(arr, 2) + 1 = 1 Then
+        ToTickerColumn = arr
+    ElseIf UBound(arr, 1) - LBound(arr, 1) + 1 = 1 Then
+        ' single row -> transpose
+        n = UBound(arr, 2) - LBound(arr, 2) + 1
+        ReDim out(0 To n - 1, 0 To 0)
+        For i = 0 To n - 1
+            out(i, 0) = arr(LBound(arr, 1), LBound(arr, 2) + i)
+        Next i
+        ToTickerColumn = out
+    Else
+        Err.Raise vbObjectError + 622, "modCms.ToTickerColumn", _
+            "Ticker list must be a single row or a single column"
     End If
 End Function
 

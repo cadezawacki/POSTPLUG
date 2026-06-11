@@ -132,6 +132,78 @@ These block the calling VBA (DoEvents pump) but the I/O is still parallel
 underneath — a 400-curve "bulk get" is N concurrent requests, not one
 3-minute SOAP call.
 
+### Tickers as first-class handles
+
+One curve per unique ticker. Register identities once — explicitly, or
+implicitly by GET/SETting with full tuples — and every call afterwards
+accepts just the ticker:
+
+```vb
+register_curve "AEP", "USD", "SENIOR_NORE_14", "SNAC100", "QUOTED_SPREADS"
+register_curve_by_range [Curves!D9:H450]      ' bulk; blank rows skipped
+
+CMS_GetCurveQuoteData "AEP"                   ' sync, ticker-only
+Set b = CMS_GetCurvesAsync([A4:A184], ...)    ' 1-col ticker range
+Set b = CMS_GetCurvesAsync("AEP", ...)        ' single ticker string
+Set b = CMS_GetTickersAsync(Array("AEP","XYZ"))  ' any-shape ticker list
+Set b = CMS_SetCurveAsync("AEP", quotesRow)   ' ticker-only async SET
+CMS_SetTickerQuoteData "AEP", quotesRow       ' ticker-only sync SET
+Set b = CMS_SetCurve5yAsync("AEP", 125.5)     ' 5Y re-mark off the cache
+```
+
+Every get/set, sync and async, accepts: per-part arguments, a 5-column tuple
+range, a 1-column ticker range, or a single ticker. Unregistered tickers
+**raise** (before anything is sent). Ticker *lists* must be a single column
+(or use `CMS_GetTickersAsync`, which normalizes any shape).
+
+### Curve analytics (off the store, no I/O)
+
+```vb
+CMS_Quote("AEP", "5Y")                ' cached quote
+CMS_CurveDiff("AEP")                  ' 5s10s steepness: 10Y - 5Y (tenors overridable)
+CMS_CurveRatio("AEP", "5Y", "10Y")    ' 10Y / 5Y
+CMS_TickerDiff("AEP", "XYZ", "5Y")    ' AEP - XYZ at 5Y
+CMS_TickerRatio("AEP", "XYZ", "5Y")   ' AEP / XYZ at 5Y
+```
+
+Unregistered tickers raise; missing quotes return `Empty`.
+
+### Pending 5Y workflow (stage on edit, mark on button)
+
+Staged amends live on the cached curves themselves — no separate cache to
+reconcile, no cell re-reads at mark time:
+
+```vb
+' sheet-change handler: user typed a new 5Y over the live one
+CMS_StagePending5y ticker, newLevel
+
+' user deleted their amend: un-stage and get the original back for the cell
+cell.Value2 = CMS_ClearPending5y(ticker)
+
+' mark button: drain every staged level into one parallel async SET
+Set b = CMS_MarkPendingAsync("MyMod.OnSet", "MyMod.OnAllSet")
+If b Is Nothing Then MsgBox "Nothing staged"
+```
+
+Also: `CMS_Pending5y`, `CMS_HasPending`, `CMS_PendingKeys`, `CMS_PendingCount`,
+`CMS_ClearAllPending`. Staged levels are consumed (cleared) when the mark
+drains; a failed SET leaves the store unchanged so the user can re-stage.
+`CMS_StoreToArray` includes a trailing "Pending 5Y" column.
+
+### Generic shared store (`modSharedStore.bas`)
+
+Namespaced key-value cache for anything that must survive across modules,
+event handlers, and async callbacks (session-scoped — a VBE reset wipes it,
+like all module state):
+
+```vb
+Shared_Set "axes", "AEP", someValueOrObject
+v = Shared_Get("axes", "AEP")                 ' Empty if missing
+Shared_GetOrDefault "axes", "AEP", 0
+Shared_Has / Shared_Remove / Shared_Clear / Shared_Keys / Shared_Count
+Set snapshot = Shared_Drain("axes")           ' atomic take-all + clear
+```
+
 ### Store (curves in memory, cells optional)
 
 Every successful GET upserts `CMS_Store()` (key = `TICKER.CCY.DEBTCLASS.PRODUCT`);

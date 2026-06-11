@@ -41,6 +41,10 @@ Public Upfronts As Variant   ' raw creditUpfront points
 ' server echo into Quotes/store once the SET succeeds.
 Public PendingQuotes As Variant
 
+' Staged-but-not-sent 5Y amend (Empty = none). Set via CMS_StagePending5y,
+' drained into an async SET by CMS_MarkPendingAsync.
+Public Pending5y As Variant
+
 ' --- Scalars ---
 Public Recovery As Variant
 Public LastMarkedOn As Variant
