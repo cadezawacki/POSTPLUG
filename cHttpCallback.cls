@@ -10,7 +10,7 @@ Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 Option Explicit
 
-Public Sub Handle(requestId As String, r As HttpResponse)
+Public Sub Handle(requestId As String, r As cHttpResponse)
     Debug.Print "[cb] " & requestId & " " & r.Status & " " & r.ElapsedMs & "ms"
 End Sub
 

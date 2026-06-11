@@ -25,6 +25,12 @@ Private gWatchKeyCount As Long
 '  INITIALIZATION
 ' ============================================================
 
+' Idempotent: initializes the router only on first call, preserving any
+' routes already registered. Use InitRouter to force a full reset.
+Public Sub EnsureRouter()
+    If gValueRoutes Is Nothing Then InitRouter
+End Sub
+
 Public Sub InitRouter()
     Set gValueRoutes = CreateObject("Scripting.Dictionary")
     gValueRoutes.CompareMode = vbTextCompare

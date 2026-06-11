@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<DnaLibrary Name="ExcelBridge Add-In" RuntimeVersion="v4.0">
+  <!-- Pack=true + IncludeDependencies=true: the build emits a single
+       self-contained .xll (ExcelBridge.dll and Newtonsoft.Json packed in). -->
+  <ExternalLibrary Path="ExcelBridge.dll" ExplicitExports="false"
+                   LoadFromBytes="true" Pack="true" IncludeDependencies="true" />
+</DnaLibrary>
