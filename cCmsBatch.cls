@@ -90,6 +90,47 @@ Public Property Get FailedCount() As Long
     FailedCount = mFailedCount
 End Property
 
+' Wall-clock ms since launch for an UNFINISHED batch (0 once done/not launched).
+Public Function AgeMs() As Long
+    Dim sec As Double
+    If mLaunchTick = 0 Or mDone Then Exit Function
+    sec = Timer - mLaunchTick
+    If sec < 0 Then sec = sec + 86400
+    AgeMs = CLng(sec * 1000)
+End Function
+
+' Force-complete a batch whose deliveries can no longer arrive (e.g. a VBE
+' state reset wiped the bridge router mid-flight). Outstanding curves are
+' failed with the reason; callbacks and the all-done fire as usual.
+Public Sub Abandon(ByVal Reason As String)
+    Dim reqIds As Variant
+    Dim rid As Variant
+    Dim curveKeys As Variant
+    Dim k As Variant
+    Dim cv As cCmsCurve
+
+    If mDone Then Exit Sub
+    reqIds = mReqKeys.Keys
+    For Each rid In reqIds
+        curveKeys = mReqKeys(rid)
+        mReqKeys.Remove rid
+        For Each k In curveKeys
+            If mCurves.Exists(CStr(k)) Then
+                Set cv = mCurves(CStr(k))
+                If Len(cv.Status) = 0 Then
+                    cv.Status = modCms.CMS_STATUS_FAILED
+                    cv.ErrorMsg = Reason
+                    mFailedCount = mFailedCount + 1
+                    modCms.NotifySubscribers cv
+                    FireOnCurve cv
+                End If
+            End If
+        Next k
+    Next rid
+    mPending = 0
+    CompleteBatch
+End Sub
+
 ' Curves whose outcome is known (OK or FAILED).
 Public Property Get CompletedCurves() As Long
     Dim k As Variant

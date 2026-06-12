@@ -293,7 +293,30 @@ Public Sub CmsWatchdogTick()
                     (gDeliveryCount - before) & " stuck deliver(ies)"
     End If
     CMS_FlushAutoFetch
+    SweepStaleBatches
     If CMS_ActiveBatchCount() > 0 Or WantedCount() > 0 Then EnsureWatchdog
+End Sub
+
+' A batch whose deliveries were lost (state reset mid-flight) would otherwise
+' stay "active" forever and keep the watchdog ticking. Abandon anything that
+' has produced nothing for far longer than any request timeout.
+Private Const BATCH_ABANDON_MS As Long = 600000   ' 10 minutes
+
+Private Sub SweepStaleBatches()
+    Dim i As Long
+    Dim b As cCmsBatch
+    If gActiveBatches Is Nothing Then Exit Sub
+    For i = gActiveBatches.Count To 1 Step -1
+        Set b = gActiveBatches(i)
+        If b.IsDone Then
+            gActiveBatches.Remove i
+        ElseIf b.AgeMs > BATCH_ABANDON_MS Then
+            Debug.Print "CMS: abandoning stuck " & b.Action & " batch after " & _
+                        (b.AgeMs \ 1000) & "s (" & b.PendingRequests & " request(s) undelivered)"
+            b.Abandon "Abandoned: no delivery within " & (BATCH_ABANDON_MS \ 1000) & _
+                      "s - responses likely lost to a state reset; relaunch"
+        End If
+    Next i
 End Sub
 
 Private Function WantedCount() As Long
@@ -325,6 +348,14 @@ Public Sub CMS_StopWatchdog()
     On Error GoTo 0
     gWatchdogOn = False
 End Sub
+
+Private Function CalcModeName() As String
+    Select Case Application.Calculation
+        Case xlCalculationAutomatic: CalcModeName = "automatic"
+        Case xlCalculationManual: CalcModeName = "manual"
+        Case Else: CalcModeName = "semiautomatic"
+    End Select
+End Function
 
 ' End-to-end smoke test - run from the Immediate window: modCms.CMS_SelfTest
 ' Walks registration state, fires one verbose GET for the first stored
@@ -387,6 +418,11 @@ Public Function CMS_Diag() As String
     s = s & "notify mode=" & CMS_GetNotifyMode() & " (0=off 1=dirty 2=calc)" & _
         "; auto prev close=" & CMS_AutoPrevCloseEnabled() & _
         "; prev biz day=" & Format$(CMS_PrevBizDay(), "yyyy-mm-dd") & vbNewLine
+    ' Calc-state visibility: ForceFullCalculation=True turns EVERY calc
+    ' trigger (incl. each formula commit) into a full-workbook rebuild.
+    s = s & "calc mode=" & CalcModeName() & _
+        "; ForceFullCalculation=" & ThisWorkbook.ForceFullCalculation & _
+        "; watchdog armed=" & gWatchdogOn & vbNewLine
     s = s & "active batches=" & CMS_ActiveBatchCount()
     If Not gActiveBatches Is Nothing Then
         For i = 1 To gActiveBatches.Count
