@@ -175,11 +175,16 @@ Public Sub write_to_cms()
     gHardStop = ws_main.Range("HARD_O_STOP").Row
     gHardStart = ws_main.Range("cms_direct_col").Row
 
+    ' Full-fidelity scan calc, then RESTORE the flag: the legacy flow left
+    ' ForceFullCalculation = True for the whole session, which turns every
+    ' subsequent recalculation into a full-workbook rebuild (the random
+    ' multi-second freezes).
     ThisWorkbook.ForceFullCalculation = True
     With ws_main
         .Range(gCmsDirectCol & ":" & gCmsDirectCol).Dirty
         .Calculate
     End With
+    ThisWorkbook.ForceFullCalculation = False
 
     ' ------------------------------------------------------------------
     ' Scan for changed marks: user-entered value (cms_col) differing from

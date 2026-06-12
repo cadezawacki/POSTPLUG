@@ -87,8 +87,29 @@ Private gWatchdogFlushCount As Long ' deliveries that were STUCK until a watchdo
 Private gSubs As Object             ' bucket (KEY or TICKER) -> Dictionary(cell address -> True)
 Private gWanted As Object           ' fourTuple keys queued for auto-fetch
 Private gFetchStamp As Object       ' key -> time of last auto-fetch launch (cooldown)
+Private gPrevWanted As Object       ' keys queued for a T-1 close fetch
+Private gPrevStamp As Object        ' key -> time of last T-1 fetch launch (cooldown)
+Private gAutoPrevClose As Variant   ' Empty = default (True)
+
+Private gNotifyMode As Long         ' see CMS_NOTIFY_* (default DIRTY)
+Private gNotifyModeSet As Boolean
+Private gWatchdogSeconds As Long    ' 0 = default (1s)
 
 Private Const AUTOFETCH_COOLDOWN_SEC As Long = 30
+Private Const PREVFETCH_COOLDOWN_SEC As Long = 300
+
+' What a store change does to subscribed cells:
+'   OFF   - nothing (subscriptions kept; read on your own schedule)
+'   DIRTY - mark dirty: automatic mode recalcs after the delivery macro;
+'           manual mode picks them up at the user's next recalc  (DEFAULT)
+'   CALC  - recalculate subscribed cells immediately (heaviest; can feel
+'           laggy when large batches land)
+Public Const CMS_NOTIFY_OFF As Long = 0
+Public Const CMS_NOTIFY_DIRTY As Long = 1
+Public Const CMS_NOTIFY_CALC As Long = 2
+
+' Text shown by CURVE() cells while a queued fetch is outstanding.
+Public Const CMS_PENDING_TEXT As String = "#Pending"
 
 ' =============================================================================
 '  CONFIGURATION
@@ -105,6 +126,40 @@ Public Sub CMS_Configure(Optional ByVal EndpointUrl As String = "", _
     If Len(Transport) > 0 Then gTransport = UCase$(Transport)
     If Len(ImpersonateUser) > 0 Then gImpersonatedUser = ImpersonateUser
 End Sub
+
+' How store changes reach subscribed cells (CMS_NOTIFY_OFF/DIRTY/CALC).
+Public Sub CMS_SetNotifyMode(ByVal Mode As Long)
+    gNotifyMode = Mode
+    gNotifyModeSet = True
+End Sub
+
+Public Function CMS_GetNotifyMode() As Long
+    If gNotifyModeSet Then
+        CMS_GetNotifyMode = gNotifyMode
+    Else
+        CMS_GetNotifyMode = CMS_NOTIFY_DIRTY
+    End If
+End Function
+
+' Watchdog tick interval in seconds (min/default 1). The watchdog only runs
+' while requests are in flight or fetches are queued.
+Public Sub CMS_SetWatchdogInterval(ByVal Seconds As Long)
+    If Seconds < 1 Then Seconds = 1
+    gWatchdogSeconds = Seconds
+End Sub
+
+' Automatic once-a-day T-1 close fetch after each curve's first live GET.
+Public Sub CMS_SetAutoPrevClose(ByVal Enabled As Boolean)
+    gAutoPrevClose = Enabled
+End Sub
+
+Public Function CMS_AutoPrevCloseEnabled() As Boolean
+    If IsEmpty(gAutoPrevClose) Then
+        CMS_AutoPrevCloseEnabled = True   ' default ON
+    Else
+        CMS_AutoPrevCloseEnabled = CBool(gAutoPrevClose)
+    End If
+End Function
 
 Public Function CMS_EndpointUrl() As String
     EnsureConfig
@@ -214,7 +269,7 @@ Private Sub EnsureWatchdog()
     ' in manual calc mode - cannot rely on a SheetCalculate event to drain it.
     If CMS_ActiveBatchCount() = 0 And WantedCount() = 0 Then Exit Sub
     On Error Resume Next
-    gWatchdogNextRun = Now + TimeSerial(0, 0, 1)
+    gWatchdogNextRun = Now + TimeSerial(0, 0, IIf(gWatchdogSeconds < 1, 1, gWatchdogSeconds))
     Application.OnTime gWatchdogNextRun, "modCms.CmsWatchdogTick"
     gWatchdogOn = (Err.Number = 0)
     On Error GoTo 0
@@ -243,6 +298,7 @@ End Sub
 
 Private Function WantedCount() As Long
     If Not gWanted Is Nothing Then WantedCount = gWanted.Count
+    If Not gPrevWanted Is Nothing Then WantedCount = WantedCount + gPrevWanted.Count
 End Function
 
 ' Called by cCmsBatch.OnHttpDone on every delivered completion.
@@ -284,7 +340,11 @@ Public Function CMS_Diag() As String
         "; deliveries=" & gDeliveryCount & _
         "; watchdog flushes=" & gWatchdogFlushCount & vbNewLine
     s = s & "cell subscriptions=" & CMS_SubscriptionCount() & _
-        "; autofetch queued=" & IIf(gWanted Is Nothing, 0, gWanted.Count) & vbNewLine
+        "; autofetch queued=" & IIf(gWanted Is Nothing, 0, gWanted.Count) & _
+        "; T-1 queued=" & IIf(gPrevWanted Is Nothing, 0, gPrevWanted.Count) & vbNewLine
+    s = s & "notify mode=" & CMS_GetNotifyMode() & " (0=off 1=dirty 2=calc)" & _
+        "; auto prev close=" & CMS_AutoPrevCloseEnabled() & _
+        "; prev biz day=" & Format$(CMS_PrevBizDay(), "yyyy-mm-dd") & vbNewLine
     s = s & "active batches=" & CMS_ActiveBatchCount()
     If Not gActiveBatches Is Nothing Then
         For i = 1 To gActiveBatches.Count
@@ -787,7 +847,23 @@ Public Function StoreGet(ByVal Key As String) As cCmsCurve
 End Function
 
 Public Sub StoreUpsert(ByVal Curve As cCmsCurve)
-    Set CMS_Store()(Curve.Key) = Curve
+    Dim old As cCmsCurve
+    ' A refresh GET delivers a NEW object; carry over session state that
+    ' lives on the store entry so it survives the replacement.
+    If CMS_Store().Exists(Curve.Key) Then
+        Set old = gStore(Curve.Key)
+        If Not old Is Curve Then
+            If old.PrevDate <> 0 And Curve.PrevDate = 0 Then
+                Curve.PrevQuotes = old.PrevQuotes
+                Curve.PrevDate = old.PrevDate
+                Curve.PrevFetchedAt = old.PrevFetchedAt
+            End If
+            If Not IsEmpty(old.Pending5y) And IsEmpty(Curve.Pending5y) Then
+                Curve.Pending5y = old.Pending5y
+            End If
+        End If
+    End If
+    Set gStore(Curve.Key) = Curve
     IndexTicker Curve
 End Sub
 
@@ -1361,15 +1437,22 @@ Private Sub NotifyBucket(ByVal Bucket As String)
             gSubs(Bucket).Remove a   ' sheet/cell gone - prune
         Else
             On Error Resume Next
-            If Application.Calculation = xlCalculationManual Then
-                ' Manual mode: nothing will recalc for us - calculate the
-                ' subscribed cells directly, right now.
-                rng.Calculate
-            Else
-                ' Automatic mode: mark dirty and let Excel recalc the full
-                ' dependency chain once this delivery macro returns.
-                rng.Dirty
-            End If
+            Select Case CMS_GetNotifyMode()
+                Case CMS_NOTIFY_CALC:
+                    ' Heaviest: force the subscribed cells to recalc NOW.
+                    If Application.Calculation = xlCalculationManual Then
+                        rng.Calculate
+                    Else
+                        rng.Dirty
+                    End If
+                Case CMS_NOTIFY_DIRTY:
+                    ' Default: cheap marking. Automatic mode recalcs after
+                    ' the delivery macro; manual mode picks the cells up at
+                    ' the user's next recalc (Shift+F9 / F9).
+                    rng.Dirty
+                Case Else  ' CMS_NOTIFY_OFF
+                    ' leave the cells alone
+            End Select
             If Err.Number <> 0 Then
                 Debug.Print "CMS notify: recalc failed for " & CStr(a) & _
                             " (" & Err.Description & ")"
@@ -1437,29 +1520,159 @@ Public Sub QueueAutoFetch(ByVal Key As String)
     EnsureWatchdog
 End Sub
 
-' Launch one async GET for everything queued. Safe to call often (no-op when
-' empty). Wired into Workbook_SheetCalculate and the watchdog tick.
+' Launch one async GET for everything queued (live and T-1 close queues).
+' Safe to call often (no-op when empty). Wired into Workbook_SheetCalculate
+' and the watchdog tick.
 Public Sub CMS_FlushAutoFetch()
     Dim ks As Variant
     Dim arr() As Variant
     Dim i As Long
+    Dim pb As cCmsBatch
+    Dim pd As Date
 
-    If gWanted Is Nothing Then Exit Sub
-    If gWanted.Count = 0 Then Exit Sub
+    ' --- live quotes ---
+    If Not gWanted Is Nothing Then
+        If gWanted.Count > 0 Then
+            ks = gWanted.Keys
+            gWanted.RemoveAll
+            ReDim arr(0 To UBound(ks), 0 To 0)
+            For i = 0 To UBound(ks)
+                arr(i, 0) = ks(i)
+                gFetchStamp(ks(i)) = Now()
+            Next i
+            On Error Resume Next
+            CMS_GetCurvesAsync arr
+            If Err.Number <> 0 Then Debug.Print "CMS auto-fetch failed to launch: " & Err.Description
+            On Error GoTo 0
+        End If
+    End If
 
-    ks = gWanted.Keys
-    gWanted.RemoveAll
-    ReDim arr(0 To UBound(ks), 0 To 0)
-    For i = 0 To UBound(ks)
-        arr(i, 0) = ks(i)
-        gFetchStamp(ks(i)) = Now()
-    Next i
-
-    On Error Resume Next
-    CMS_GetCurvesAsync arr
-    If Err.Number <> 0 Then Debug.Print "CMS auto-fetch failed to launch: " & Err.Description
-    On Error GoTo 0
+    ' --- T-1 business-day close (NYOISCLOSE) ---
+    If Not gPrevWanted Is Nothing Then
+        If gPrevWanted.Count > 0 Then
+            ks = gPrevWanted.Keys
+            gPrevWanted.RemoveAll
+            ReDim arr(0 To UBound(ks), 0 To 0)
+            For i = 0 To UBound(ks)
+                arr(i, 0) = ks(i)
+                gPrevStamp(ks(i)) = Now()
+            Next i
+            pd = CMS_PrevBizDay()
+            On Error Resume Next
+            Set pb = CMS_GetCurvesAsync(arr, CMS_TAG_NYOISCLOSE, pd)
+            If Err.Number <> 0 Then
+                Debug.Print "CMS T-1 fetch failed to launch: " & Err.Description
+            ElseIf Not pb Is Nothing Then
+                pb.PrevCloseMode = True
+                pb.PrevAsOf = pd
+            End If
+            On Error GoTo 0
+        End If
+    End If
 End Sub
+
+' =============================================================================
+'  T-1 BUSINESS-DAY CLOSE (NYOISCLOSE)
+'  After a curve's first live GET of the day, its previous-business-day close
+'  is fetched once (async) and cached on the same store entry - historical
+'  closes don't change intraday, so once per day is enough. Default ON;
+'  toggle with CMS_SetAutoPrevClose False (then use CMS_GetPrevCloseAsync
+'  manually). Access via curve.PrevQuote("5Y"), CMS_PrevQuote, CMS_DayChange,
+'  or =CURVE("AEP","Prev5Y") / "PrevDate" / "PrevFetchedAt" in cells.
+' =============================================================================
+
+' Previous BUSINESS day (weekends skipped; holidays too if a 'CmsHolidays'
+' named range of dates exists in the workbook).
+Public Function CMS_PrevBizDay(Optional ByVal FromDate As Date) As Date
+    Dim hol As Variant
+    If FromDate = 0 Then FromDate = Date
+    On Error Resume Next
+    hol = ThisWorkbook.Names("CmsHolidays").RefersToRange.Value2
+    On Error GoTo 0
+    If IsEmpty(hol) Then
+        CMS_PrevBizDay = CDate(Application.WorksheetFunction.WorkDay(FromDate, -1))
+    Else
+        CMS_PrevBizDay = CDate(Application.WorksheetFunction.WorkDay(FromDate, -1, hol))
+    End If
+End Function
+
+' Queue a curve for a T-1 close fetch if it doesn't already have today's
+' (i.e. the current T-1 date's) close cached. Cooldown-guarded; respects the
+' CMS_SetAutoPrevClose toggle.
+Public Sub QueuePrevCloseFetch(ByVal Key As String)
+    Dim stored As cCmsCurve
+
+    If Not CMS_AutoPrevCloseEnabled() Then Exit Sub
+    Set stored = StoreGet(Key)
+    If stored Is Nothing Then Exit Sub
+    If stored.PrevDate = CMS_PrevBizDay() Then Exit Sub   ' already current
+
+    If gPrevWanted Is Nothing Then
+        Set gPrevWanted = CreateObject("Scripting.Dictionary")
+        gPrevWanted.CompareMode = vbTextCompare
+        Set gPrevStamp = CreateObject("Scripting.Dictionary")
+        gPrevStamp.CompareMode = vbTextCompare
+    End If
+    If gPrevStamp.Exists(Key) Then
+        If DateDiff("s", gPrevStamp(Key), Now()) < PREVFETCH_COOLDOWN_SEC Then Exit Sub
+    End If
+    gPrevWanted(Key) = True
+    EnsureWatchdog
+End Sub
+
+' Route a prev-close GET result into the stored curve's PrevQuotes (the live
+' quotes are untouched). Called by cCmsBatch for PrevCloseMode batches.
+Public Sub StorePrevClose(ByVal Curve As cCmsCurve, ByVal AsOf As Date)
+    Dim stored As cCmsCurve
+    Set stored = StoreGet(Curve.Key)
+    If stored Is Nothing Then Exit Sub
+    stored.PrevQuotes = Curve.Quotes
+    stored.PrevDate = AsOf
+    stored.PrevFetchedAt = Now()
+    NotifySubscribers stored
+End Sub
+
+' Explicit T-1 close fetch: any curve spec (tuples / tickers / single
+' ticker), or everything in the store when omitted. Returns Nothing when
+' there is nothing to fetch.
+Public Function CMS_GetPrevCloseAsync(Optional ByVal CurveSpec As Variant, _
+                                      Optional ByVal OnCurve As String = "", _
+                                      Optional ByVal OnAllDone As String = "", _
+                                      Optional ByVal CurvesPerRequest As Long = 1, _
+                                      Optional ByVal TimeoutMs As Long = DEFAULT_TIMEOUT_MS) As cCmsBatch
+    Dim b As cCmsBatch
+    Dim pd As Date
+    pd = CMS_PrevBizDay()
+    If IsMissing(CurveSpec) Or IsEmpty(CurveSpec) Then
+        Set b = LaunchGetForKeys(CMS_Store().Keys, CMS_TAG_NYOISCLOSE, pd, _
+                                 OnCurve, OnAllDone, CurvesPerRequest, TimeoutMs)
+    Else
+        Set b = CMS_GetCurvesAsync(CurveSpec, CMS_TAG_NYOISCLOSE, pd, _
+                                   OnCurve, OnAllDone, CurvesPerRequest, TimeoutMs)
+    End If
+    If Not b Is Nothing Then
+        b.PrevCloseMode = True
+        b.PrevAsOf = pd
+    End If
+    Set CMS_GetPrevCloseAsync = b
+End Function
+
+' Cached T-1 close quote (Empty if not cached yet).
+Public Function CMS_PrevQuote(ByVal TickerOrKey As String, _
+                              Optional ByVal Tenor As String = "5Y") As Variant
+    CMS_PrevQuote = RequireStored(TickerOrKey).PrevQuote(Tenor)
+End Function
+
+' Day change: live quote minus T-1 close at a tenor (Empty if either missing).
+Public Function CMS_DayChange(ByVal TickerOrKey As String, _
+                              Optional ByVal Tenor As String = "5Y") As Variant
+    Dim cv As cCmsCurve
+    Dim a As Variant, b As Variant
+    Set cv = RequireStored(TickerOrKey)
+    a = cv.Quote(Tenor): b = cv.PrevQuote(Tenor)
+    If IsEmpty(a) Or IsEmpty(b) Then Exit Function
+    CMS_DayChange = CDbl(a) - CDbl(b)
+End Function
 
 ' =============================================================================
 '  REQUEST CONSTRUCTION

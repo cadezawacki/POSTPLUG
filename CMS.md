@@ -349,20 +349,27 @@ Conventions: tenor pairs read *second minus/over first*; ticker pairs read
 =TICKERRATIO("AEP","XYZ")
 ```
 
+T-1 close fields (see [below](#t-1-business-day-close)): `Prev5Y`,
+`Prev10Y`, …, `PrevDate`, `PrevFetchedAt` — so `=CURVEDIFF("AEP","Prev5Y","5Y")`
+is the day change at 5Y.
+
 - **Self-subscribing**: each call registers its own cell against the
-  curve(s) it reads, so it recalcs automatically whenever the store changes.
-  Not volatile — only affected cells recalc.
+  curve(s) it reads. Not volatile — only affected cells are touched.
+- **Notify modes** (`CMS_SetNotifyMode`): how a store change reaches
+  subscribed cells. `CMS_NOTIFY_DIRTY` (default) marks them dirty — instant
+  refresh in automatic calc mode, picked up at your next Shift+F9/F9 in
+  manual mode; `CMS_NOTIFY_CALC` recalculates them immediately on every
+  delivery (heaviest — can feel laggy when large batches land);
+  `CMS_NOTIFY_OFF` leaves cells alone.
 - **Auto-fetch**: a quote read on a *registered* but unfetched curve shows
-  `#N/A`, queues the key, **and arms the OnTime watchdog** — so the GET
-  launches within ~1s with no user action and no sheet refresh, in BOTH
-  calculation modes (`Workbook_SheetCalculate` drains the queue too when it
-  fires). When the response lands, the subscribed cells are recalculated
-  directly (manual mode) or dirtied for Excel's recalc (automatic mode), and
-  the `#N/A` becomes the level by itself. 30s cooldown; FAILED curves are
-  **not** auto-retried (`=CURVE(t,"Error")` shows why — use
-  `CMS_RefreshFailedAsync` to retry); unregistered tickers are never fetched
-  (no identity). Pass `FALSE` as the last argument to disable.
-- Unknown field names return `#NAME?`; unregistered/unfetched return `#N/A`.
+  **`#Pending`**, queues the key, and arms the OnTime watchdog — the GET
+  launches within ~1s with no user action. Derived functions
+  (`CURVEDIFF`, …) propagate `#Pending` instead of erroring. 30s cooldown;
+  FAILED curves show `#N/A` and are **not** auto-retried
+  (`=CURVE(t,"Error")` shows why — `CMS_RefreshFailedAsync` retries);
+  unregistered tickers show `#N/A` and are never fetched. Pass `FALSE` as
+  the last argument to disable.
+- Unknown field names return `#NAME?`.
 
 ---
 
@@ -386,6 +393,30 @@ unregistered tickers are held by name and start firing once the ticker
 exists. Stale references (deleted sheets/cells) self-prune.
 
 ---
+
+## 12b. T-1 business-day close
+
+After each curve's **first live GET of the day**, its previous *business*
+day close (`NYOISCLOSE`, weekend-aware via `WorkDay`; holidays too if a
+`CmsHolidays` named range of dates exists) is fetched once, async, and
+cached on the same store entry — historical closes don't change intraday.
+**Default ON**; `CMS_SetAutoPrevClose False` to disable.
+
+```vb
+?CMS_PrevQuote("AEP", "5Y")            ' cached T-1 close
+?CMS_DayChange("AEP", "5Y")            ' live - T-1 close
+?CMS_PrevBizDay()                      ' the date being cached
+?CMS_GetStored("AEP").PrevQuote("10Y"), CMS_GetStored("AEP").PrevDate
+
+' Manual / toggle-off path - fetch T-1 for a spec or the whole store:
+Set b = CMS_GetPrevCloseAsync()                ' everything
+Set b = CMS_GetPrevCloseAsync([A4:A30])        ' subset
+```
+
+The live quotes and the close live on the same `cCmsCurve` (`Quotes` vs
+`PrevQuotes`/`PrevDate`/`PrevFetchedAt`), and both survive refresh GETs
+(refreshes carry over the cached close and any staged pending level).
+In cells: `=CURVE("AEP","Prev5Y")` etc.
 
 ## 13. Whole-store refresh wrappers
 

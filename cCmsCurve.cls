@@ -37,6 +37,11 @@ Public Quotes As Variant     ' selected per QuoteConvention
 Public Spreads As Variant    ' raw creditSpread points
 Public Upfronts As Variant   ' raw creditUpfront points
 
+' --- Previous business-day close (NYOISCLOSE), cached once per day ---
+Public PrevQuotes As Variant ' 17-grid as of PrevDate
+Public PrevDate As Date      ' the T-1 BUSINESS day the quotes are for (0 = never fetched)
+Public PrevFetchedAt As Date ' when the close was pulled
+
 ' Full 17-point curve queued for a SET (computed client-side); merged with the
 ' server echo into Quotes/store once the SET succeeds.
 Public PendingQuotes As Variant
@@ -68,6 +73,7 @@ Private Sub Class_Initialize()
     Quotes = emptyQ
     Spreads = emptyQ
     Upfronts = emptyQ
+    PrevQuotes = emptyQ
     Status = ""
     ErrorMsg = ""
 End Sub
@@ -107,6 +113,13 @@ Public Function Quote(ByVal Tenor As String) As Variant
     If idx >= 0 Then Quote = Quotes(idx)
 End Function
 
+' Previous business-day close quote by tenor. Empty if not cached.
+Public Function PrevQuote(ByVal Tenor As String) As Variant
+    Dim idx As Long
+    idx = modCms.CMS_TenorIndex(Tenor)
+    If idx >= 0 Then PrevQuote = PrevQuotes(idx)
+End Function
+
 Public Function FiveYear() As Variant
     FiveYear = Quotes(modCms.CMS_IDX_5Y)
 End Function
@@ -131,15 +144,39 @@ Public Function HasQuotes() As Boolean
 End Function
 
 ' Generic field access (sheet UDFs / dynamic readers): any tenor name plus
-' every scalar and identity field. Unknown names return #NAME?.
+' every scalar and identity field. "Prev" + tenor reads the cached T-1 close
+' (e.g. "Prev5Y"); PrevDate / PrevFetchedAt expose the close metadata.
+' Unknown names return #NAME?.
 Public Function Field(ByVal FieldName As String) As Variant
     Dim idx As Long
+    Dim fn As String
+
     idx = modCms.CMS_TenorIndex(FieldName)
     If idx >= 0 Then
         Field = Quotes(idx)
         Exit Function
     End If
-    Select Case UCase$(Replace(Trim$(FieldName), " ", ""))
+
+    fn = UCase$(Replace(Trim$(FieldName), " ", ""))
+
+    ' T-1 close fields: PREV5Y, PREV10Y, ... PREVDATE, PREVFETCHEDAT
+    If Left$(fn, 4) = "PREV" Then
+        idx = modCms.CMS_TenorIndex(Mid$(fn, 5))
+        If idx >= 0 Then
+            Field = PrevQuotes(idx)
+            Exit Function
+        End If
+        Select Case fn
+            Case "PREVDATE":
+                If PrevDate = 0 Then Field = Empty Else Field = PrevDate
+                Exit Function
+            Case "PREVFETCHEDAT":
+                If PrevFetchedAt = 0 Then Field = Empty Else Field = PrevFetchedAt
+                Exit Function
+        End Select
+    End If
+
+    Select Case fn
         Case "RECOVERY":                      Field = Recovery
         Case "LASTMARKEDON", "MARKED":        Field = LastMarkedOn
         Case "LASTMARKEDBY":                  Field = LastMarkedBy
@@ -156,7 +193,12 @@ Public Function Field(ByVal FieldName As String) As Variant
         Case "QUOTECONVENTION", "CONVENTION": Field = QuoteConvention
         Case "KEY", "FOURTUPLE", "LABEL":     Field = Key()
         Case "ELAPSEDMS":                     Field = ElapsedMs
-        Case "FETCHEDAT":                     Field = FetchedAt
+        Case "FETCHEDAT":
+            ' Full datetime (Now() at delivery); format the cell to see the
+            ' time, or use FetchedAtText for an unambiguous string.
+            If FetchedAt = 0 Then Field = Empty Else Field = FetchedAt
+        Case "FETCHEDATTEXT":
+            If FetchedAt = 0 Then Field = "" Else Field = Format$(FetchedAt, "yyyy-mm-dd hh:nn:ss")
         Case Else:                            Field = CVErr(2029) ' #NAME?
     End Select
 End Function
