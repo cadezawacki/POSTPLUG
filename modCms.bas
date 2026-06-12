@@ -209,7 +209,10 @@ End Sub
 
 Private Sub EnsureWatchdog()
     If gWatchdogOn Then Exit Sub
-    If CMS_ActiveBatchCount() = 0 Then Exit Sub
+    ' Armed while requests are in flight OR auto-fetches are queued: the queue
+    ' is filled from UDF calc context, which cannot launch HTTP itself and -
+    ' in manual calc mode - cannot rely on a SheetCalculate event to drain it.
+    If CMS_ActiveBatchCount() = 0 And WantedCount() = 0 Then Exit Sub
     On Error Resume Next
     gWatchdogNextRun = Now + TimeSerial(0, 0, 1)
     Application.OnTime gWatchdogNextRun, "modCms.CmsWatchdogTick"
@@ -235,8 +238,12 @@ Public Sub CmsWatchdogTick()
                     (gDeliveryCount - before) & " stuck deliver(ies)"
     End If
     CMS_FlushAutoFetch
-    If CMS_ActiveBatchCount() > 0 Then EnsureWatchdog
+    If CMS_ActiveBatchCount() > 0 Or WantedCount() > 0 Then EnsureWatchdog
 End Sub
+
+Private Function WantedCount() As Long
+    If Not gWanted Is Nothing Then WantedCount = gWanted.Count
+End Function
 
 ' Called by cCmsBatch.OnHttpDone on every delivered completion.
 Public Sub NoteDelivery()
@@ -1354,8 +1361,20 @@ Private Sub NotifyBucket(ByVal Bucket As String)
             gSubs(Bucket).Remove a   ' sheet/cell gone - prune
         Else
             On Error Resume Next
-            rng.Dirty                ' automatic mode: Excel recalcs dependents after this macro
-            If Application.Calculation = xlCalculationManual Then rng.Calculate
+            If Application.Calculation = xlCalculationManual Then
+                ' Manual mode: nothing will recalc for us - calculate the
+                ' subscribed cells directly, right now.
+                rng.Calculate
+            Else
+                ' Automatic mode: mark dirty and let Excel recalc the full
+                ' dependency chain once this delivery macro returns.
+                rng.Dirty
+            End If
+            If Err.Number <> 0 Then
+                Debug.Print "CMS notify: recalc failed for " & CStr(a) & _
+                            " (" & Err.Description & ")"
+                Err.Clear
+            End If
             On Error GoTo 0
         End If
     Next a
@@ -1411,6 +1430,11 @@ Public Sub QueueAutoFetch(ByVal Key As String)
         If DateDiff("s", gFetchStamp(Key), Now()) < AUTOFETCH_COOLDOWN_SEC Then Exit Sub
     End If
     gWanted(Key) = True
+    ' Self-driving in manual calc mode: arm the OnTime watchdog so the queue
+    ' drains ~1s from now even if no SheetCalculate event ever fires and no
+    ' batch is currently in flight. (Application.OnTime is one of the few
+    ' state changes a UDF may make; guarded On Error inside EnsureWatchdog.)
+    EnsureWatchdog
 End Sub
 
 ' Launch one async GET for everything queued. Safe to call often (no-op when

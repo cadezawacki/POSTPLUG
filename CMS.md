@@ -353,12 +353,15 @@ Conventions: tenor pairs read *second minus/over first*; ticker pairs read
   curve(s) it reads, so it recalcs automatically whenever the store changes.
   Not volatile — only affected cells recalc.
 - **Auto-fetch**: a quote read on a *registered* but unfetched curve shows
-  `#N/A`, queues the key, and an async GET launches the moment calculation
-  ends (`Workbook_SheetCalculate`; the delivery watchdog drains the queue
-  too). The cell updates itself when the response lands. 30s cooldown;
-  FAILED curves are **not** auto-retried (`=CURVE(t,"Error")` shows why —
-  use `CMS_RefreshFailedAsync` to retry); unregistered tickers are never
-  fetched (no identity). Pass `FALSE` as the last argument to disable.
+  `#N/A`, queues the key, **and arms the OnTime watchdog** — so the GET
+  launches within ~1s with no user action and no sheet refresh, in BOTH
+  calculation modes (`Workbook_SheetCalculate` drains the queue too when it
+  fires). When the response lands, the subscribed cells are recalculated
+  directly (manual mode) or dirtied for Excel's recalc (automatic mode), and
+  the `#N/A` becomes the level by itself. 30s cooldown; FAILED curves are
+  **not** auto-retried (`=CURVE(t,"Error")` shows why — use
+  `CMS_RefreshFailedAsync` to retry); unregistered tickers are never fetched
+  (no identity). Pass `FALSE` as the last argument to disable.
 - Unknown field names return `#NAME?`; unregistered/unfetched return `#N/A`.
 
 ---
