@@ -100,10 +100,11 @@ Private Const PREVFETCH_COOLDOWN_SEC As Long = 300
 
 ' What a store change does to subscribed cells:
 '   OFF   - nothing (subscriptions kept; read on your own schedule)
-'   DIRTY - mark dirty: automatic mode recalcs after the delivery macro;
-'           manual mode picks them up at the user's next recalc  (DEFAULT)
-'   CALC  - recalculate subscribed cells immediately (heaviest; can feel
-'           laggy when large batches land)
+'   DIRTY - mark dirty: picked up at the next recalc only
+'   CALC  - recalculate subscribed cells immediately, so CURVE() cells go
+'           #Pending -> value with no user action  (DEFAULT)
+' (If CALC ever feels laggy, check ThisWorkbook.ForceFullCalculation first -
+' when that flag is leaked True, every recalc is a full-workbook rebuild.)
 Public Const CMS_NOTIFY_OFF As Long = 0
 Public Const CMS_NOTIFY_DIRTY As Long = 1
 Public Const CMS_NOTIFY_CALC As Long = 2
@@ -137,7 +138,7 @@ Public Function CMS_GetNotifyMode() As Long
     If gNotifyModeSet Then
         CMS_GetNotifyMode = gNotifyMode
     Else
-        CMS_GetNotifyMode = CMS_NOTIFY_DIRTY
+        CMS_GetNotifyMode = CMS_NOTIFY_CALC
     End If
 End Function
 
@@ -1049,6 +1050,11 @@ Public Sub register_curve(ByVal Ticker As String, ByVal Ccy As String, _
     Dim cv As New cCmsCurve
     cv.Init Ticker, Ccy, DebtClass, Product, QuoteConvention
     RegisterIdentity cv
+    ' Cells that evaluated BEFORE this ticker existed (e.g. the sheet calced
+    ' ahead of Workbook_Open's registration) subscribed under the bare ticker
+    ' and froze at #N/A. Waking them re-resolves, queues their fetch, and the
+    ' normal auto-fetch chain takes over.
+    NotifySubscribers cv
 End Sub
 
 ' Register a block of curves from a Range/2D array with the usual 5 columns
@@ -1092,9 +1098,60 @@ Public Function CMS_ResolveKey(ByVal TickerOrKey As String) As String
             Exit Function
         End If
     End If
+    ' Self-heal: a VBE reset (End on an error dialog, Stop, editing code in
+    ' break mode) wipes the store and registry. If the workbook defines a
+    ' 'CmsRegisterRange' name pointing at the 5-tuple block, re-register from
+    ' it and retry before failing.
+    If TryAutoRegister() Then
+        If gTickerIndex.Exists(s) Then
+            CMS_ResolveKey = gTickerIndex(s)
+            Exit Function
+        End If
+    End If
     Err.Raise vbObjectError + 642, "modCms.CMS_ResolveKey", _
         "Ticker '" & s & "' is not registered. Call register_curve / " & _
         "register_curve_by_range, or GET it once with the full tuple."
+End Function
+
+' True when the ticker (or full key) can be resolved against the registry -
+' the guard to use in event handlers before staging/reading, so a wiped
+' store degrades gracefully instead of raising mid-event.
+Public Function CMS_IsRegistered(ByVal TickerOrKey As String) As Boolean
+    Dim s As String
+    s = UCase$(Trim$(TickerOrKey))
+    If Len(s) = 0 Then Exit Function
+    If InStr(1, s, ".") > 0 Then
+        CMS_IsRegistered = CMS_Store().Exists(s)
+        Exit Function
+    End If
+    If Not gTickerIndex Is Nothing Then CMS_IsRegistered = gTickerIndex.Exists(s)
+    If Not CMS_IsRegistered Then
+        If TryAutoRegister() Then
+            CMS_IsRegistered = gTickerIndex.Exists(s)
+        End If
+    End If
+End Function
+
+' Re-register everything from the 'CmsRegisterRange' workbook name, but only
+' when the store is EMPTY (the unmistakable signature of a state reset) so a
+' genuinely unknown ticker still fails loudly. Quotes refill organically:
+' the next recalc of each CURVE cell re-queues its auto-fetch.
+Private Function TryAutoRegister() As Boolean
+    Dim rng As Range
+    If CMS_Store().Count > 0 Then Exit Function
+    On Error Resume Next
+    Set rng = ThisWorkbook.Names("CmsRegisterRange").RefersToRange
+    On Error GoTo 0
+    If rng Is Nothing Then Exit Function
+    On Error Resume Next
+    register_curve_by_range rng
+    TryAutoRegister = (Err.Number = 0) And (CMS_Store().Count > 0)
+    On Error GoTo 0
+    If TryAutoRegister Then
+        Debug.Print "CMS " & Format$(Now, "hh:nn:ss") & _
+                    ": store was empty (state reset?) - auto-registered " & _
+                    CMS_Store().Count & " curve(s) from 'CmsRegisterRange'"
+    End If
 End Function
 
 ' Stored curve by ticker or key (Nothing if registered key has gone missing).

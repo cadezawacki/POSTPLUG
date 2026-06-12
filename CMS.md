@@ -154,6 +154,23 @@ and indexes the ticker. After that:
 ?CMS_RegisteredTickers()(0)
 ```
 
+**Workbook-open bootstrap** (recommended):
+
+```vb
+Private Sub Workbook_Open()
+    Call http_start
+    register_curve_by_range [Curves.CurveNames]   ' 5 columns!
+    Application.CalculateFull   ' evaluate saved CURVE cells once so they
+                                ' subscribe + queue their fetches; after this
+                                ' the reactive chain is fully self-driving
+End Sub
+```
+
+Also define a workbook name **`CmsRegisterRange`** referring to the same
+5-tuple block: if a VBE state reset ever wipes the registry mid-session, the
+engine silently re-registers from it on the next lookup (and the auto-fetch
+chain refills quotes cell by cell) instead of erroring with "not registered".
+
 Rules:
 
 - Anything containing `.` is treated as a full fourTuple key and passes
@@ -277,20 +294,27 @@ Staged amends live **on the cached curves** — no second cache, no cell
 re-reads at mark time.
 
 ```vb
-' ----- in the Worksheet_Change handler -----
-Private Sub Worksheet_Change(ByVal Target As Range)
-    If Not Intersect(Target, Me.Range("FiveYearCol")) Is Nothing Then
-        Dim t As String: t = Me.Cells(Target.Row, "A").Value2
-        If IsEmpty(Target.Value2) Or Target.Value2 = "" Then
-            ' user deleted their amend: un-stage, restore the cached original
-            Application.EnableEvents = False
-            Target.Value2 = CMS_ClearPending5y(t)
-            Application.EnableEvents = True
-        ElseIf IsNumeric(Target.Value2) Then
-            CMS_StagePending5y t, CDbl(Target.Value2)
-            CMS_SubscribeRange t, Target.EntireRow   ' recalc the row when the SET lands
-        End If
+' ----- in the change handler (hardened: never leaves EnableEvents off,
+'       never raises mid-event, uses Sh/Target's sheet not ActiveSheet) -----
+Private Sub Workbook_SheetChange(ByVal Sh As Object, ByVal Target As Range)
+    On Error GoTo SafeExit
+    If Not NamedRangeExistsIn("cms_col", Sh) Then Exit Sub
+    If Target.Column <> Sh.Range("cms_col").Column Then Exit Sub
+    If Target.Row < 4 Or Target.Row > Sh.Range("last_row").Row Then Exit Sub
+
+    Dim t As String: t = CStr(Sh.Cells(Target.Row, "A").Value2)
+    If Not CMS_IsRegistered(t) Then Exit Sub      ' blank row / wiped store
+
+    If IsEmpty(Target.Value2) Or Target.Value2 = "" Then
+        Application.EnableEvents = False
+        Target.Value2 = CMS_ClearPending5y(t)     ' restore cached original
+    ElseIf IsNumeric(Target.Value2) Then
+        CMS_StagePending5y t, CDbl(Target.Value2)
+        CMS_SubscribeRange t, Sh.Cells(Target.Row, "A").Resize(1, 70)
     End If
+
+SafeExit:
+    Application.EnableEvents = True               ' ALWAYS restore
 End Sub
 
 ' ----- the mark button -----
@@ -355,12 +379,14 @@ is the day change at 5Y.
 
 - **Self-subscribing**: each call registers its own cell against the
   curve(s) it reads. Not volatile — only affected cells are touched.
+  Because they're not volatile, **F9/Shift+F9 never re-evaluates a clean
+  CURVE cell** — the subscription notify is what dirties/recalcs them.
 - **Notify modes** (`CMS_SetNotifyMode`): how a store change reaches
-  subscribed cells. `CMS_NOTIFY_DIRTY` (default) marks them dirty — instant
-  refresh in automatic calc mode, picked up at your next Shift+F9/F9 in
-  manual mode; `CMS_NOTIFY_CALC` recalculates them immediately on every
-  delivery (heaviest — can feel laggy when large batches land);
-  `CMS_NOTIFY_OFF` leaves cells alone.
+  subscribed cells. `CMS_NOTIFY_CALC` (default) recalculates them
+  immediately — `#Pending` becomes the level with no user action.
+  `CMS_NOTIFY_DIRTY` only marks them (picked up at the next recalc);
+  `CMS_NOTIFY_OFF` leaves cells alone. If CALC ever feels laggy, check
+  `ThisWorkbook.ForceFullCalculation` in `CMS_Diag` before blaming it.
 - **Auto-fetch**: a quote read on a *registered* but unfetched curve shows
   **`#Pending`**, queues the key, and arms the OnTime watchdog — the GET
   launches within ~1s with no user action. Derived functions
