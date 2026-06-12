@@ -326,6 +326,48 @@ Public Sub CMS_StopWatchdog()
     gWatchdogOn = False
 End Sub
 
+' End-to-end smoke test - run from the Immediate window: modCms.CMS_SelfTest
+' Walks registration state, fires one verbose GET for the first stored
+' curve, pumps until it lands, and prints the outcome at every step.
+Public Sub CMS_SelfTest()
+    Dim k As String
+    Dim b As cCmsBatch
+    Dim cv As cCmsCurve
+    Dim prevVerbose As Boolean
+
+    Debug.Print "=== CMS self-test " & Format$(Now, "hh:nn:ss") & " ==="
+    Debug.Print CMS_Diag()
+
+    If CMS_RegisteredCount() = 0 Then
+        Debug.Print "STORE IS EMPTY - register_curve_by_range did not run or raised."
+        Debug.Print "Check your registration range has 5 columns (Ticker, Ccy, DebtClass, Product, QuoteConvention)."
+        Exit Sub
+    End If
+
+    k = CStr(CMS_Store().Keys()(0))
+    Debug.Print "test GET for: " & k
+
+    prevVerbose = modBridge.gHttpVerbose
+    modBridge.gHttpVerbose = True
+    On Error GoTo Cleanup
+
+    Set b = CMS_GetCurvesAsync(k)
+    If b.WaitAll(30000) Then
+        Set cv = b.Curve(CStr(b.Keys()(0)))
+        Debug.Print "result: status=" & cv.Status & "  5Y=" & CStr(cv.Quote("5Y")) & _
+                    "  http=" & cv.HttpStatus & "  elapsed=" & cv.ElapsedMs & "ms" & _
+                    IIf(Len(cv.ErrorMsg) > 0, "  error=" & cv.ErrorMsg, "")
+        Debug.Print "FetchedAt=" & Format$(cv.FetchedAt, "yyyy-mm-dd hh:nn:ss")
+    Else
+        Debug.Print "TIMED OUT after 30s. EB_LastDispatchError=" & modBridge.BridgeLastDispatchError()
+    End If
+
+Cleanup:
+    If Err.Number <> 0 Then Debug.Print "self-test raised: " & Err.Description
+    modBridge.gHttpVerbose = prevVerbose
+    Debug.Print "=== self-test done ==="
+End Sub
+
 ' One-shot health report:  ?modCms.CMS_Diag
 Public Function CMS_Diag() As String
     Dim s As String
@@ -503,6 +545,7 @@ Public Function CMS_GetCurvesAsync(ByVal FiveTuples As Variant, _
     Next i
 
     batch.FinishLaunch
+    TraceLaunch batch, "GET"
     Set CMS_GetCurvesAsync = batch
 End Function
 
@@ -572,6 +615,7 @@ Public Function CMS_SetCurvesAsync(ByVal FiveTuples As Variant, _
     Next r
 
     batch.FinishLaunch
+    TraceLaunch batch, "SET"
     Set CMS_SetCurvesAsync = batch
 End Function
 
@@ -658,8 +702,17 @@ NextRow:
 
     batch.SetRowKeys rowKeys
     batch.FinishLaunch
+    TraceLaunch batch, "SET-5Y"
     Set CMS_SetCurves5yAsync = batch
 End Function
+
+' One line per launched batch in the Immediate window - the first thing to
+' check when "nothing happens": did anything actually go out?
+Private Sub TraceLaunch(ByVal Batch As cCmsBatch, ByVal Label As String)
+    Debug.Print "CMS " & Label & " " & Format$(Now, "hh:nn:ss") & ": " & _
+                Batch.Count & " curve(s), " & Batch.PendingRequests & " request(s) sent" & _
+                IIf(Batch.FailedCount > 0, ", " & Batch.FailedCount & " failed at launch", "")
+End Sub
 
 ' ---------------------------------------------------------------------------
 ' Async refresh of a single curve (returns the batch; result via callbacks
@@ -1259,14 +1312,22 @@ Public Function CMS_RegisteredCount() As Long
     CMS_RegisteredCount = CMS_Store().Count
 End Function
 
-' Force-refresh EVERY curve in the store (registered identities included) -
-' one parallel async GET across the lot.
+' Force-refresh EVERY curve in the store - one parallel async GET across the
+' lot. This INCLUDES curves that were only registered and never fetched
+' (registration puts the identity in the store), so register + GetAll/
+' RefreshAll is the standard sheet-load sequence. Raises if the store is
+' empty - that means registration didn't happen.
 Public Function CMS_RefreshAllAsync(Optional ByVal Tag As String = CMS_TAG_LIVE, _
                                     Optional ByVal QuoteDate As Date, _
                                     Optional ByVal OnCurve As String = "", _
                                     Optional ByVal OnAllDone As String = "", _
                                     Optional ByVal CurvesPerRequest As Long = 1, _
                                     Optional ByVal TimeoutMs As Long = DEFAULT_TIMEOUT_MS) As cCmsBatch
+    If CMS_Store().Count = 0 Then
+        Err.Raise vbObjectError + 650, "modCms.CMS_RefreshAllAsync", _
+            "The curve store is empty - nothing to fetch. Call register_curve / " & _
+            "register_curve_by_range (or GET with full tuples) first."
+    End If
     Set CMS_RefreshAllAsync = LaunchGetForKeys(CMS_Store().Keys, Tag, QuoteDate, _
                                                OnCurve, OnAllDone, CurvesPerRequest, TimeoutMs)
 End Function
