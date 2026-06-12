@@ -217,6 +217,7 @@ Public Sub OnHttpDone(RequestId As String, r As cHttpResponse)
             If cv.Status = modCms.CMS_STATUS_FAILED Then mFailedCount = mFailedCount + 1
             ' Persist to the in-memory curve store.
             If cv.IsOk Then
+                cv.FetchedAt = Now()
                 If mAction = "SET" Then
                     modCms.StoreAfterSet cv
                 Else

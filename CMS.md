@@ -1,45 +1,543 @@
-# CMS Async Curve Engine
+# CMS Async Curve Engine — Deep Reference
 
-Replaces the legacy CMS Data Access add-in (`modCmsGetCurveSpreads`,
-`modCmsSetCurveSpreads`, `CMarketData`, `CWebServiceHelper`, `CArrayHelper`,
-`modConst`, `modInternalUtils`, `modPublicUtils`, `modWindowsAPI`,
-`modSpecificReferenceCurves`, `modControlMenu`) and the `xmlBats` /
-winhttpjs.bat SET hack with three files built on the ExcelBridge async HTTP
-engine:
+Fully asynchronous GET/SET of CMS credit curves from Excel/VBA, built on the
+ExcelBridge XLL. Replaces the legacy CMS Data Access add-in and the
+xmlBats/winhttpjs SET hack with byte-compatible wire formats and a reactive,
+ticker-first API. **Zero dependencies on the deprecated add-in modules and no
+VBA project references required** (MSXML and Scripting.Dictionary are
+late-bound).
 
-| File | Role |
+---
+
+## Contents
+
+1. [Files & import checklist](#1-files--import-checklist)
+2. [Quick start](#2-quick-start)
+3. [Configuration & transports](#3-configuration--transports)
+4. [Core concepts](#4-core-concepts)
+5. [Registration & ticker-first access](#5-registration--ticker-first-access)
+6. [GET — every flavor](#6-get--every-flavor)
+7. [SET — every flavor](#7-set--every-flavor)
+8. [The 5Y perturbation workflow](#8-the-5y-perturbation-workflow)
+9. [Pending levels: stage on edit, mark on button](#9-pending-levels-stage-on-edit-mark-on-button)
+10. [Curve analytics](#10-curve-analytics)
+11. [Reactive sheet functions (UDFs)](#11-reactive-sheet-functions-udfs)
+12. [Cell subscriptions](#12-cell-subscriptions)
+13. [Whole-store refresh wrappers](#13-whole-store-refresh-wrappers)
+14. [The store & the curve object](#14-the-store--the-curve-object)
+15. [Generic shared store](#15-generic-shared-store)
+16. [Callbacks contract](#16-callbacks-contract)
+17. [Delivery model — when callbacks fire](#17-delivery-model--when-callbacks-fire)
+18. [Units & conventions](#18-units--conventions)
+19. [Wire formats](#19-wire-formats)
+20. [Failure semantics](#20-failure-semantics)
+21. [Diagnostics & debugging](#21-diagnostics--debugging)
+22. [Gotchas](#22-gotchas)
+23. [Migration from the legacy add-in](#23-migration-from-the-legacy-add-in)
+
+---
+
+## 1. Files & import checklist
+
+| File | Type | Role |
+|---|---|---|
+| `modCms.bas` | module | engine: wire formats, transports, parsing, store, registry, subscriptions, public API |
+| `cCmsCurve.cls` | class | one curve: identity, 17-grid quotes, scalars, pending level, status |
+| `cCmsBatch.cls` | class | one bulk GET/SET in flight: parallel requests + callbacks |
+| `modCmsUdf.bas` | module | reactive sheet functions: `CURVE`, `CURVEDIFF`, `TICKERDIFF`, … |
+| `modSharedStore.bas` | module | generic namespaced key-value session store |
+| `cmsMarker.bas` | module | the workbook's Ctrl+Shift+M publish flow, rebuilt on the engine |
+
+Prerequisites already in the workbook: the ExcelBridge XLL + `modBridge`,
+`modBridgeEvents`, `modHttp`, `cHttpBatch`, `cHttpResponse`, and
+`cadesHelpers` (user-info and app-state helpers). `ThisWorkbook` needs the
+`Workbook_SheetCalculate` handler (drains the UDF auto-fetch queue) and
+`bridge_stop` calling `modCms.CMS_StopWatchdog`.
+
+---
+
+## 2. Quick start
+
+```vb
+' Sheet load: register + fetch every curve on the sheet, async, in parallel.
+' Headers of D9:H450 are Ticker, Ccy, DebtClass, Product, QuoteConvention.
+Dim b As cCmsBatch
+Set b = CMS_GetCurvesAsync([Curves!D9:H450], "LIVE", , _
+                           "MyMod.OnCurve", "MyMod.OnAllDone")
+' returns immediately; Excel stays live; callbacks fire as responses land
+
+' ...later, anywhere, by ticker only:
+?CMS_Quote("AEP", "5Y")
+?CMS_CurveDiff("AEP")                          ' 5s10s
+Set b = CMS_SetCurve5yAsync("AEP", 127.5)      ' re-mark off a new 5Y
+
+' or in a cell:
+'   =CURVE("AEP","10Y")     -> updates itself when data arrives
+```
+
+```vb
+' The callbacks (plain Public Subs in a STANDARD module):
+Public Sub OnCurve(curve As cCmsCurve, batch As cCmsBatch)
+    If Not curve.IsOk Then Debug.Print curve.Key & " FAILED: " & curve.ErrorMsg
+End Sub
+
+Public Sub OnAllDone(batch As cCmsBatch)
+    Debug.Print "done: " & batch.Count & " curves, " & batch.FailedCount & _
+                " failed, " & batch.WallMs & "ms"
+End Sub
+```
+
+---
+
+## 3. Configuration & transports
+
+Two transports carry the **same Rosetta XML**; the default is the proven
+legacy SOAP path.
+
+| Transport | Endpoint | Body |
+|---|---|---|
+| `SOAP` (default) | `http://cms-lxp.lehman.com/CreditMarkingService/` | rpc/encoded envelope, `<string>` = user-metadata, `<string0>` = Rosetta |
+| `REST` | `<base>/api/v1/getMarketData` \| `setMarketData` | `{"requestHeader":{...},"request":"<cms-request>…"}` |
+
+```vb
+CMS_Configure "https://host:25551", "REST"     ' switch transport explicitly
+CMS_Configure , , "someuser"                   ' impersonate (user-id field)
+?CMS_EndpointUrl, CMS_Transport
+```
+
+Or set the optional named ranges `CmsEndpointUrl` / `CmsTransport` in the
+workbook — read once on first use. The REST facade is the modernized version
+of the same CreditMarkingService (verified: identical user-metadata and
+Rosetta payloads); test it against DEV before switching production flows.
+
+---
+
+## 4. Core concepts
+
+- **The store** (`CMS_Store()`): one in-memory `cCmsCurve` per fourTuple key
+  (`TICKER.CCY.DEBTCLASS.PRODUCT`), holding the latest known state. Every
+  successful GET replaces the entry; every successful SET merges the echo.
+  Cells are optional — dump the store to a sheet only if you want to see it.
+- **The ticker registry**: one curve per unique ticker. Registering
+  (explicitly or implicitly via any full-tuple GET/SET) maps
+  `TICKER -> key`, after which every call accepts just the ticker.
+- **Batches** (`cCmsBatch`): a bulk GET/SET in flight. One HTTP request per
+  curve by default (maximum parallelism); per-curve callbacks as responses
+  land; one all-complete callback at the end.
+- **Tenor grids**: GETs always use the 17-standard
+  (`0M 3M 6M 9M 1Y 2Y 3Y 4Y 5Y 6Y 7Y 8Y 9Y 10Y 15Y 20Y 30Y`); SETs always
+  the 12-standard (`0M 3M 6M 9M 1Y 2Y 3Y 4Y 5Y 6Y 7Y 10Y` — never
+  8Y/9Y/15Y/20Y/30Y).
+- **Tags**: `"LIVE"` for today, `"NYOISCLOSE"` + a `QuoteDate` for
+  historical closes.
+- **Reactivity**: sheet cells subscribe to curves and recalc automatically
+  when the store changes.
+
+---
+
+## 5. Registration & ticker-first access
+
+```vb
+' One at a time:
+register_curve "AEP", "USD", "SENIOR_NORE_14", "SNAC100", "QUOTED_SPREADS"
+
+' Or a whole block (same 5 columns; blank rows skipped):
+register_curve_by_range [Curves!D9:H450]
+```
+
+Registration stores the identity (without clobbering quotes already fetched)
+and indexes the ticker. After that:
+
+```vb
+?CMS_GetStored("AEP").Quote("5Y")       ' store access by ticker
+?CMS_ResolveKey("AEP")                  ' -> "AEP.USD.SENIOR_NORE_14.SNAC100"
+?CMS_RegisteredTickers()(0)
+```
+
+Rules:
+
+- Anything containing `.` is treated as a full fourTuple key and passes
+  through unchanged.
+- A GET/SET with full tuples **registers implicitly** — explicit
+  registration is optional.
+- A ticker-only call on an unregistered ticker **raises**, and for bulk
+  inputs the resolution happens before anything is sent (no partial
+  batches).
+- Re-registering a ticker against a different tuple remaps it (warning in
+  the Immediate window) — one curve per ticker is enforced by last-write.
+
+---
+
+## 6. GET — every flavor
+
+All GETs share: `Tag` (`LIVE`/`NYOISCLOSE`), optional `QuoteDate`
+(historical), callbacks, `CurvesPerRequest` (1 = one request per curve, the
+default; raise to group N marketSets per request), `TimeoutMs`
+(default 120s).
+
+### Async (preferred — returns the batch immediately)
+
+```vb
+' 5-column tuple range or array (registers identities as a side effect):
+Set b = CMS_GetCurvesAsync([D9:H450], "LIVE", , "M.OnCurve", "M.OnAllDone")
+
+' 1-column ticker range (must be registered):
+Set b = CMS_GetCurvesAsync([A4:A184], "LIVE")
+
+' Single ticker / key string:
+Set b = CMS_GetCurvesAsync("AEP")
+
+' Ticker list in any shape (1D array, row, or column):
+Set b = CMS_GetTickersAsync(Array("AEP", "XYZ", "ABC"))
+
+' Per-part arguments (parts optional once registered):
+Set b = CMS_GetCurveAsync("AEP", "USD", "SENIOR_NORE_14", "SNAC100", "QUOTED_SPREADS")
+Set b = CMS_GetCurveAsync("AEP")                    ' registered ticker
+
+' Historical (T-1 business day close):
+Set b = CMS_GetCurvesAsync(rng, "NYOISCLOSE", Date - 1)
+```
+
+### Sync (blocks the calling VBA only; I/O still parallel underneath)
+
+```vb
+a = CMS_GetCurveQuoteData("AEP", "USD", "SENIOR_NORE_14", "SNAC100", _
+                          "LIVE", Now(), "QUOTED_SPREADS")   ' legacy signature
+a = CMS_GetCurveQuoteData("AEP")                             ' ticker-only
+a2 = CMS_GetBulkCurveQuoteData([D9:H450], "LIVE")            ' 2D, row-per-input-row
+a2 = CMS_GetBulkCurveQuoteData([A4:A30])                     ' ticker column
+```
+
+Result rows are 25 columns: the 17 tenors then `Recovery, LastMarkedOn,
+LastMarkedBy, Owner, IsParent, CurveType, Status, ErrorMessage`
+(`CMS_GetCurveQuoteDataHeader17()` gives the header).
+
+---
+
+## 7. SET — every flavor
+
+Quotes are passed in the units the GET handed you (see
+[Units](#18-units--conventions)). `TermQuotes`/`Quotes` rows may be 12-wide
+(SET-tenor order) or 17-wide (full grid; the never-set tenors are ignored).
+Recovery rates are only sent when `> 0`.
+
+### Async
+
+```vb
+' Bulk - the CMS_SetBulkCurveQuoteData that never existed, parallel per curve:
+Set b = CMS_SetCurvesAsync([D9:H450], quotes2D, recoveries, "M.OnSet", "M.OnAllSet")
+Set b = CMS_SetCurvesAsync([A4:A30], quotes2D)        ' ticker column
+
+' Single curve, per-part or ticker-only:
+Set b = CMS_SetCurveAsync("AEP", quotesRow, "USD", "SENIOR_NORE_14", "SNAC100")
+Set b = CMS_SetCurveAsync("AEP", quotesRow)           ' registered ticker
+```
+
+### Sync
+
+```vb
+r = CMS_SetCurveQuoteData("AEP", "USD", "SENIOR_NORE_14", "SNAC100", quotesRow)  ' legacy
+r = CMS_SetTickerQuoteData("AEP", quotesRow)          ' ticker-only
+r2 = CMS_SetBulkCurveQuoteData([D9:H450], quotes2D)   ' blocking bulk
+```
+
+SET responses echo the sent values; on success the echo is merged over the
+computed curve in the store, so the cache stays exact.
+
+---
+
+## 8. The 5Y perturbation workflow
+
+The transform (`CMS_ApplyNew5y`): front end `0M..4Y` keeps the **ratio** to
+the old 5Y (`old/old5y * new5y`); long end `6Y..30Y` keeps the
+**difference** (`new5y + (old − old5y)`); `5Y` becomes the new mark. All 17
+points are computed and cached; only the 12 SET tenors go to CMS.
+
+```vb
+' One curve (cached quotes drive the transform - GET first):
+Set b = CMS_SetCurve5yAsync("AEP", 127.5, "M.OnSet", "M.OnAllSet")
+
+' Many curves: N x 2 array/range of (ticker-or-key, new 5Y):
+Set b = CMS_SetCurves5yAsync([K4:L30], "M.OnSet", "M.OnAllSet")
+Set b = CMS_SetCurves5yAsync(Array("AEP", 127.5))     ' single row shorthand
+
+' Pure math, no I/O:
+newQuotes17 = CMS_ApplyNew5y(CMS_GetStored("AEP").Quotes, 127.5)
+```
+
+Per-row failure handling: rows whose curve isn't in the store, whose level
+isn't numeric, or whose cached curve has no/zero 5Y are FAILED individually
+(callback fires with the reason) without sinking the rest of the batch.
+
+---
+
+## 9. Pending levels: stage on edit, mark on button
+
+Staged amends live **on the cached curves** — no second cache, no cell
+re-reads at mark time.
+
+```vb
+' ----- in the Worksheet_Change handler -----
+Private Sub Worksheet_Change(ByVal Target As Range)
+    If Not Intersect(Target, Me.Range("FiveYearCol")) Is Nothing Then
+        Dim t As String: t = Me.Cells(Target.Row, "A").Value2
+        If IsEmpty(Target.Value2) Or Target.Value2 = "" Then
+            ' user deleted their amend: un-stage, restore the cached original
+            Application.EnableEvents = False
+            Target.Value2 = CMS_ClearPending5y(t)
+            Application.EnableEvents = True
+        ElseIf IsNumeric(Target.Value2) Then
+            CMS_StagePending5y t, CDbl(Target.Value2)
+            CMS_SubscribeRange t, Target.EntireRow   ' recalc the row when the SET lands
+        End If
+    End If
+End Sub
+
+' ----- the mark button -----
+Public Sub mark_button()
+    Dim b As cCmsBatch
+    Set b = CMS_MarkPendingAsync("MyMod.OnSet", "MyMod.OnAllSet")
+    If b Is Nothing Then MsgBox "Nothing staged."
+End Sub
+```
+
+`CMS_MarkPendingAsync` drains: reads every staged level, clears it, computes
+each full curve from the cache, and launches the parallel SETs. A failed SET
+leaves the store unchanged so the user can re-stage. Inspection:
+
+```vb
+?CMS_PendingCount(), Join(CMS_PendingKeys(), ", ")
+?CMS_Pending5y("AEP"), CMS_HasPending("AEP")
+CMS_ClearAllPending          ' abandon everything staged
+```
+
+`=CURVE("AEP","Pending5y")` cells update live as levels are staged/cleared.
+
+---
+
+## 10. Curve analytics
+
+Pure cache reads — **no hidden I/O** (the sheet UDFs add auto-fetch; the VBA
+functions never fetch). Unregistered tickers raise; missing quotes return
+`Empty`.
+
+```vb
+?CMS_Quote("AEP", "7Y")
+?CMS_CurveDiff("AEP")                  ' 5s10s steepness: 10Y - 5Y
+?CMS_CurveDiff("AEP", "1Y", "5Y")      ' 1s5s
+?CMS_CurveRatio("AEP", "5Y", "10Y")    ' 10Y / 5Y
+?CMS_TickerDiff("AEP", "XYZ", "5Y")    ' AEP - XYZ at 5Y
+?CMS_TickerRatio("AEP", "XYZ")         ' AEP / XYZ at 5Y
+```
+
+Conventions: tenor pairs read *second minus/over first*; ticker pairs read
+*first minus/over second*.
+
+---
+
+## 11. Reactive sheet functions (UDFs)
+
+```vb
+=CURVE("AEP")                  ' 5Y quote (default field)
+=CURVE("AEP", "10Y")           ' any tenor
+=CURVE("AEP", "Recovery")      ' any field: Status, Owner, CurveType, Error,
+                               '   LastMarkedOn/By, IsParent, Pending5y,
+                               '   FetchedAt, Ccy, Product, Key, ...
+=CURVEDIFF("AEP")              ' 5s10s
+=CURVERATIO("AEP","5Y","10Y")
+=TICKERDIFF("AEP","XYZ","5Y")
+=TICKERRATIO("AEP","XYZ")
+```
+
+- **Self-subscribing**: each call registers its own cell against the
+  curve(s) it reads, so it recalcs automatically whenever the store changes.
+  Not volatile — only affected cells recalc.
+- **Auto-fetch**: a quote read on a *registered* but unfetched curve shows
+  `#N/A`, queues the key, and an async GET launches the moment calculation
+  ends (`Workbook_SheetCalculate`; the delivery watchdog drains the queue
+  too). The cell updates itself when the response lands. 30s cooldown;
+  FAILED curves are **not** auto-retried (`=CURVE(t,"Error")` shows why —
+  use `CMS_RefreshFailedAsync` to retry); unregistered tickers are never
+  fetched (no identity). Pass `FALSE` as the last argument to disable.
+- Unknown field names return `#NAME?`; unregistered/unfetched return `#N/A`.
+
+---
+
+## 12. Cell subscriptions
+
+The mechanism under the UDFs, available directly for anything else:
+
+```vb
+CMS_SubscribeRange "AEP", ws.Range("B17:BT17")  ' recalc this row on any change
+CMS_UnsubscribeRange "AEP", ws.Range("B17:BT17")
+CMS_UnsubscribeAll "AEP"                        ' one curve
+CMS_UnsubscribeAll                              ' everything
+?CMS_SubscriptionCount()
+```
+
+Fires on: GET arrival, SET confirm, SET **failure** (status cells stay
+honest), pending stage/clear. In automatic calc mode ranges are marked
+`Dirty` (Excel recalcs dependents after the delivery macro); in manual mode
+the subscribed ranges are calculated directly. Subscriptions to
+unregistered tickers are held by name and start firing once the ticker
+exists. Stale references (deleted sheets/cells) self-prune.
+
+---
+
+## 13. Whole-store refresh wrappers
+
+All return the launched `cCmsBatch`, or `Nothing` when there is nothing to
+do. All accept the usual `Tag, QuoteDate, OnCurve, OnAllDone,
+CurvesPerRequest, TimeoutMs`.
+
+```vb
+Set b = CMS_RefreshAllAsync()             ' force-refresh EVERYTHING in the store
+Set b = CMS_GetAllAsync()                 ' alias of the above
+Set b = CMS_RefreshFailedAsync()          ' retry only FAILED curves
+                                          ' (also re-arms UDF auto-fetch for them)
+Set b = CMS_RefreshStaleAsync(15)         ' never-fetched or older than 15 min
+
+?CMS_RegisteredCount()
+?Join(CMS_RegisteredTickers(), ", ")
+?Join(CMS_RegisteredKeys(), ", ")
+
+CMS_WriteStoreToRange [Dump!A1]           ' whole store -> sheet, with header
+```
+
+Staleness uses `cCmsCurve.FetchedAt` (stamped on every successful server
+round trip; also readable as `=CURVE("AEP","FetchedAt")`).
+
+---
+
+## 14. The store & the curve object
+
+```vb
+Dim cv As cCmsCurve
+Set cv = CMS_GetStored("AEP")             ' by ticker (or StoreGet(key) by key)
+
+cv.Quote("5Y")        ' selected quote per the curve's QuoteConvention
+cv.Quotes             ' Variant(0..16), the full 17-grid
+cv.Spreads            ' raw creditSpread points   (bps on GETs)
+cv.Upfronts           ' raw creditUpfront points  (% on GETs)
+cv.Field("Owner")     ' dynamic access to any field by name
+cv.FiveYear()         ' Quotes(8)
+cv.ApplyNew5y(127.5)  ' transformed 17-grid (pure function)
+cv.ToRow()            ' the 25-column result row
+cv.Recovery / .LastMarkedOn / .LastMarkedBy / .Owner / .IsParent / .CurveType
+cv.Status / .ErrorMsg / .IsOk() / .HasQuotes()
+cv.Pending5y          ' staged amend (Empty = none)
+cv.FetchedAt / .ElapsedMs / .HttpStatus / .RequestId
+cv.Key                ' "AEP.USD.SENIOR_NORE_14.SNAC100"
+```
+
+Store-level: `CMS_Store()` (the dictionary itself), `CMS_StoreToArray()`
+(2D dump incl. a trailing "Pending 5Y" column), `CMS_StoreClear`,
+`CMS_WriteBatchToRange b, [A1]` (a batch's results, row-per-input-row).
+
+Registered-but-unfetched curves sit in the store with `Empty` quotes and
+`Status = ""` until their first GET.
+
+---
+
+## 15. Generic shared store
+
+`modSharedStore.bas` — namespaced key-value cache for anything that must
+survive across modules, event handlers, and async callbacks:
+
+```vb
+Shared_Set "axes", "AEP", anythingIncludingObjects
+v = Shared_Get("axes", "AEP")                  ' Empty if missing
+v = Shared_GetOrDefault("axes", "AEP", 0)
+?Shared_Has("axes", "AEP"), Shared_Count("axes")
+Shared_Remove "axes", "AEP"
+Shared_Clear "axes"
+For Each k In Shared_Keys("axes"): ... : Next
+
+Set snapshot = Shared_Drain("axes")  ' ATOMIC take-all + clear: iterate the
+                                     ' snapshot while new entries land in a
+                                     ' fresh namespace - ideal for
+                                     ' stage-then-commit button flows
+```
+
+Session-scoped: a VBE reset wipes it, like all module-level state.
+
+---
+
+## 16. Callbacks contract
+
+Plain `Public Sub`s in a **standard module** (not a sheet/ThisWorkbook
+module), passed by name (`"Module.Sub"` preferred):
+
+```vb
+Public Sub OnCurve(curve As cCmsCurve, batch As cCmsBatch)   ' per response
+Public Sub OnAllDone(batch As cCmsBatch)                     ' once, at the end
+```
+
+- Both run on Excel's main thread — touching sheets is safe.
+- Exceptions inside callbacks are swallowed and logged to the Immediate
+  window; they never break batch accounting.
+- Rows failed at launch (bad input, unregistered, no cached curve) fire the
+  per-curve callback synchronously *during* the launching call.
+- The batch object stays alive and inspectable until complete (and
+  `CMS_LastBatch` keeps the most recent one) even if your local variable
+  goes out of scope.
+
+Useful batch members: `Count`, `CompletedCurves`, `FailedCount`,
+`PendingRequests`, `IsDone`, `Action`, `Keys`, `Curve(key)`, `WallMs`,
+`MaxRequestMs`, `WaitAll([ms])`, `ToArray([header])`.
+
+---
+
+## 17. Delivery model — when callbacks fire
+
+The .NET engine does all HTTP I/O on worker threads — always running. The
+final hop into VBA is queued via `QueueAsMacro` and executes when Excel's
+main thread can run a macro:
+
+| Excel state | Delivery |
 |---|---|
-| `modCms.bas` | Wire formats, transports, parsing, curve math, public API, in-memory store |
-| `cCmsCurve.cls` | One curve: 5-tuple identity, 17-grid quotes, scalars, status |
-| `cCmsBatch.cls` | A bulk GET/SET in flight: per-curve + all-complete callbacks |
+| Idle at the grid (normal use) | automatic, immediate |
+| Your VBA running | deferred until `DoEvents` (what `WaitAll`/`CMS_Pump` pump) |
+| VBE **break mode** (breakpoint / *Debug* on an error) | blocked until you resume |
+| Cell edit mode / modal dialog | blocked until you leave it |
 
-`cmsMarker.bas` (the Ctrl+Shift+M publish flow) was rewritten on top of it.
-Everything is late-bound — no MSXML/MSSOAP/Outlook references needed.
+**Watchdog**: while any batch is in flight, a 1-second `Application.OnTime`
+tick stays armed; its `DoEvents` flushes any delivery stuck waiting for a
+macro context (this is what makes fire-and-forget SET-only flows complete
+hands-off). It disarms when the last batch finishes; `bridge_stop` cancels
+it on close. Break mode still blocks everything — nothing can run there.
 
-## Is the `/api/v1` doc the same service?
+**State resets wipe everything**: *End* on an error dialog, Stop/Reset, or
+editing code in break mode clears the store, registry, subscriptions, AND
+modBridge's request router — in-flight responses arriving after a reset are
+dropped. Relaunch after any reset.
 
-Yes. `/api/v1/getMarketData` and `/api/v1/setMarketData` are the modernized
-JSON facade over the same CreditMarkingService: the JSON `request` field
-carries `<cms-request><operation name="getMarketData">` wrapping the **same
-user-metadata and Rosetta XML** the old SOAP add-in sent. The user-metadata
-format in the migration note matches the legacy `CompileUserMetaData`
-field-for-field, and the note explicitly says SET calls are unaffected.
-Both transports are implemented:
+---
 
-- **SOAP** (default — the proven path the workbook uses today): rpc/encoded
-  envelope, `<string>` = user metadata, `<string0>` = Rosetta, POSTed to
-  `http://cms-lxp.lehman.com/CreditMarkingService/`, `SOAPAction: ""`.
-- **REST**: `{"requestHeader":{...},"request":"<cms-request>..."}` POSTed to
-  `<base>/api/v1/getMarketData|setMarketData`; response is
-  `{"responseHeader":{code,...},"response":"<Rosetta.../>"}`.
+## 18. Units & conventions
 
-Switch with `CMS_Configure "https://host:25551", "REST"` or the optional
-`CmsEndpointUrl` / `CmsTransport` named ranges. Everything downstream of the
-transport (Rosetta build + parse) is shared.
+Identical to the legacy add-in:
 
-## Wire formats kept byte-compatible
+| Direction | creditSpread | creditUpfront |
+|---|---|---|
+| GET response | raw × 10000 → **bps** | raw × 100 → **%** |
+| SET request | sent **verbatim** | sent verbatim |
+| SET response | echoed verbatim | echoed verbatim |
 
-**GET** (one `<marketSet>` per curve, any number per request):
+So: SET in the same units the GET handed you and everything is consistent
+(the 5Y/pending workflows do this automatically since they compute from the
+cache). Quote selection per `QuoteConvention`: `SPREADS`/`QUOTED_SPREADS` →
+creditSpread; `UPFRONT` → creditUpfront; `QUOTED` → upfront, falling back to
+spread; `RUNNING` → spread, falling back to upfront. Standard-contract
+products (`SNAC*`, `STEC*`, `STE*`, `STA*`, `BLCDS*`, `SUKU*`) get
+`<contractualSpread>-777</contractualSpread>` on SET points, exactly as the
+old flow sent.
+
+---
+
+## 19. Wire formats
+
+**GET** (N marketSets per request — 1 by default):
 
 ```xml
 <Rosetta version="5.0.15"><market><marketData><action>GET</action>
@@ -51,10 +549,10 @@ transport (Rosetta build + parse) is shared.
     <nameValuePair name="tag">TAG</nameValuePair>
     <nameValuePair name="returnCreditCurveType">CONV</nameValuePair>
   </genericKeys>
-</marketSet>...</marketData></market></Rosetta>
+</marketSet>…</marketData></market></Rosetta>
 ```
 
-**SET** (per curve; mirrors `xmlBats.create_cds_xml` exactly):
+**SET** (one curve per request; mirrors `xmlBats.create_cds_xml`):
 
 ```xml
 <Rosetta version="5.0.15"><market><marketData><action>SET</action>
@@ -64,270 +562,88 @@ transport (Rosetta build + parse) is shared.
     <creditSpread>
       <issuerTicker/><debtClass/><currency/><creditCurveType>PRODUCT</creditCurveType>
       <periodMultiplier>5</periodMultiplier><period>Y</period>
-      <contractualSpread>-777</contractualSpread>   <!-- standard-contract products only -->
+      <contractualSpread>-777</contractualSpread>   <!-- standard-contract only -->
     </creditSpread>
     <value>123.45</value>
-  </point> ... </marketSet></marketData></market></Rosetta>
+  </point>…</marketSet></marketData></market></Rosetta>
 ```
 
-## Conventions baked in
+User-metadata matches the legacy `CompileUserMetaData` field-for-field
+(user-id, user-domain, application-id/-version, application-batch-id, id,
+host-id). Bodies over 30K chars are staged into the XLL in chunks
+automatically.
 
-- **GET tenors**: always the 17-standard
-  `0M 3M 6M 9M 1Y 2Y 3Y 4Y 5Y 6Y 7Y 8Y 9Y 10Y 15Y 20Y 30Y`.
-- **SET tenors**: the 12 we mark — `0M 3M 6M 9M 1Y 2Y 3Y 4Y 5Y 6Y 7Y 10Y`
-  (8Y/9Y/15Y/20Y/30Y are computed/stored but never sent).
-- **Tags**: `LIVE` today, `NYOISCLOSE` for historical dates
-  (`QuoteDate` parameter → Rosetta `<date>`).
-- **Units** (identical to the legacy add-in): GET responses are scaled —
-  creditSpread ×10000 → bps, creditUpfront ×100 → %. SET requests send your
-  values verbatim and the SET response echoes them verbatim. So: SET in the
-  same units the GET handed you, and everything is consistent.
-- **5Y perturbation** (`CMS_ApplyNew5y`): front end `0M..4Y` keeps the *ratio*
-  to the old 5Y (`old/old5y * new5y`); long end `6Y..30Y` keeps the
-  *difference* (`new5y + (old - old5y)`); `5Y` = the new mark.
+---
 
-## API
+## 20. Failure semantics
 
-### Async (preferred)
-
-```vb
-' Sheet load: bulk GET of D9:H450 (Ticker,Ccy,DebtClass,Product,QuoteConvention)
-Dim b As cCmsBatch
-Set b = CMS_GetCurvesAsync(Sheet1.Range("D9:H450"), "LIVE", , _
-            "MyMod.OnCurve", "MyMod.OnAllDone")           ' returns immediately
-
-' T-1 close
-Set b = CMS_GetCurvesAsync(rng, "NYOISCLOSE", Date - 1, ...)
-
-' Perturb: new 5Y levels for changed curves only; full curve computed from
-' the store (populated by the GET), 12 tenors SET per curve, all parallel
-Set b = CMS_SetCurves5yAsync(Array2D_of_key_and_new5y, "MyMod.OnSet", "MyMod.OnAllSet")
-
-' Raw bulk SET (quotes 12-wide in SET order, or 17-wide full grid)
-Set b = CMS_SetCurvesAsync(fiveTuples, quotes2D, recoveries, "MyMod.OnSet", "MyMod.OnAllSet")
-```
-
-Callback signatures (plain module subs, run on the main thread):
-
-```vb
-Public Sub OnCurve(curve As cCmsCurve, batch As cCmsBatch)  ' each response as it lands
-Public Sub OnAllDone(batch As cCmsBatch)                    ' once, after the last one
-```
-
-`CurvesPerRequest` (GET only) groups N marketSets per HTTP request —
-default 1 = maximum parallelism; raise it if the server prefers fewer,
-fatter requests. SETs are always one curve per request.
-
-### Sync compatibility (legacy signatures, 25-column rows: 17 tenors + Recovery,
-LastMarkedOn, LastMarkedBy, Owner, IsParent, CurveType, Status, Error)
-
-```vb
-CMS_GetCurveQuoteData ticker, ccy, dc, product, "LIVE", , "SPREADS"   ' 1 row
-CMS_GetBulkCurveQuoteData fiveTuplesRange, "LIVE"                     ' N rows
-CMS_SetCurveQuoteData ticker, ccy, dc, product, termQuotes            ' echoed row
-CMS_SetBulkCurveQuoteData fiveTuples, quotes2D                        ' N echoed rows
-```
-
-These block the calling VBA (DoEvents pump) but the I/O is still parallel
-underneath — a 400-curve "bulk get" is N concurrent requests, not one
-3-minute SOAP call.
-
-### Tickers as first-class handles
-
-One curve per unique ticker. Register identities once — explicitly, or
-implicitly by GET/SETting with full tuples — and every call afterwards
-accepts just the ticker:
-
-```vb
-register_curve "AEP", "USD", "SENIOR_NORE_14", "SNAC100", "QUOTED_SPREADS"
-register_curve_by_range [Curves!D9:H450]      ' bulk; blank rows skipped
-
-CMS_GetCurveQuoteData "AEP"                   ' sync, ticker-only
-Set b = CMS_GetCurvesAsync([A4:A184], ...)    ' 1-col ticker range
-Set b = CMS_GetCurvesAsync("AEP", ...)        ' single ticker string
-Set b = CMS_GetTickersAsync(Array("AEP","XYZ"))  ' any-shape ticker list
-Set b = CMS_SetCurveAsync("AEP", quotesRow)   ' ticker-only async SET
-CMS_SetTickerQuoteData "AEP", quotesRow       ' ticker-only sync SET
-Set b = CMS_SetCurve5yAsync("AEP", 125.5)     ' 5Y re-mark off the cache
-```
-
-Every get/set, sync and async, accepts: per-part arguments, a 5-column tuple
-range, a 1-column ticker range, or a single ticker. Unregistered tickers
-**raise** (before anything is sent). Ticker *lists* must be a single column
-(or use `CMS_GetTickersAsync`, which normalizes any shape).
-
-### Curve analytics (off the store, no I/O)
-
-```vb
-CMS_Quote("AEP", "5Y")                ' cached quote
-CMS_CurveDiff("AEP")                  ' 5s10s steepness: 10Y - 5Y (tenors overridable)
-CMS_CurveRatio("AEP", "5Y", "10Y")    ' 10Y / 5Y
-CMS_TickerDiff("AEP", "XYZ", "5Y")    ' AEP - XYZ at 5Y
-CMS_TickerRatio("AEP", "XYZ", "5Y")   ' AEP / XYZ at 5Y
-```
-
-Unregistered tickers raise; missing quotes return `Empty`.
-
-### Pending 5Y workflow (stage on edit, mark on button)
-
-Staged amends live on the cached curves themselves — no separate cache to
-reconcile, no cell re-reads at mark time:
-
-```vb
-' sheet-change handler: user typed a new 5Y over the live one
-CMS_StagePending5y ticker, newLevel
-
-' user deleted their amend: un-stage and get the original back for the cell
-cell.Value2 = CMS_ClearPending5y(ticker)
-
-' mark button: drain every staged level into one parallel async SET
-Set b = CMS_MarkPendingAsync("MyMod.OnSet", "MyMod.OnAllSet")
-If b Is Nothing Then MsgBox "Nothing staged"
-```
-
-Also: `CMS_Pending5y`, `CMS_HasPending`, `CMS_PendingKeys`, `CMS_PendingCount`,
-`CMS_ClearAllPending`. Staged levels are consumed (cleared) when the mark
-drains; a failed SET leaves the store unchanged so the user can re-stage.
-`CMS_StoreToArray` includes a trailing "Pending 5Y" column.
-
-### Reactive sheet functions (`modCmsUdf.bas`)
-
-```vb
-=CURVE("AEP")                  ' 5Y quote (default)
-=CURVE("AEP", "10Y")           ' any tenor
-=CURVE("AEP", "Recovery")      ' any field: Status, Owner, CurveType, Error,
-                               '   LastMarkedOn/By, IsParent, Pending5y, Key, ...
-=CURVEDIFF("AEP")              ' 5s10s (10Y - 5Y); tenors overridable
-=CURVERATIO("AEP","5Y","10Y")
-=TICKERDIFF("AEP","XYZ","5Y")  ' AEP - XYZ at 5Y
-=TICKERRATIO("AEP","XYZ")
-```
-
-Each call **subscribes its own cell** to the curve(s) it reads
-(`Application.Caller`), so the cell recalcs automatically whenever the store
-changes — GET arrives, SET confirms/fails, pending level staged or cleared.
-Not volatile: only affected cells recalc, marked `Dirty` per curve as the
-deliveries land (in manual calc mode the subscribed cells are calculated
-directly).
-
-**Auto-fetch**: a `CURVE` quote on a *registered* but unfetched curve shows
-`#N/A`, queues the key, and the GET launches the moment calculation ends
-(`Workbook_SheetCalculate` → `CMS_FlushAutoFetch`; the watchdog drains it
-too). When the response lands the cell updates itself. 30s cooldown prevents
-refetch storms; FAILED curves are not auto-retried (`=CURVE(t,"Error")` says
-why); unregistered tickers are never fetched (no identity) — register first.
-Pass `FALSE` as the last argument to disable. The VBA analytics
-(`CMS_CurveDiff` etc.) stay pure cache reads — no hidden I/O.
-
-Manual subscriptions for anything that isn't a `CURVE` cell — e.g. recalc a
-row of formulas when a pending mark confirms:
-
-```vb
-CMS_SubscribeRange "AEP", ws.Range("B17:BT17")   ' fires on every store change
-CMS_UnsubscribeRange "AEP", ws.Range("B17:BT17")
-CMS_UnsubscribeAll "AEP"                          ' or all: CMS_UnsubscribeAll
-```
-
-### Generic shared store (`modSharedStore.bas`)
-
-Namespaced key-value cache for anything that must survive across modules,
-event handlers, and async callbacks (session-scoped — a VBE reset wipes it,
-like all module state):
-
-```vb
-Shared_Set "axes", "AEP", someValueOrObject
-v = Shared_Get("axes", "AEP")                 ' Empty if missing
-Shared_GetOrDefault "axes", "AEP", 0
-Shared_Has / Shared_Remove / Shared_Clear / Shared_Keys / Shared_Count
-Set snapshot = Shared_Drain("axes")           ' atomic take-all + clear
-```
-
-### Store (curves in memory, cells optional)
-
-Every successful GET upserts `CMS_Store()` (key = `TICKER.CCY.DEBTCLASS.PRODUCT`);
-every successful SET merges the echo over the computed curve. Sheet output is
-opt-in:
-
-```vb
-CMS_StoreToArray()                          ' everything, with header
-CMS_WriteBatchToRange b, [A1], True         ' a batch, row-per-input-row
-StoreGet("IBM.USD.SENIOR.DERIV").Quote("5Y")
-```
-
-## Delivery model — when do callbacks actually fire?
-
-The .NET engine does the HTTP I/O on worker threads — that part is always
-running in the background. The **final hop into VBA** (`EB_OnHttpBatch` →
-`cHttpBatch` → `cCmsBatch` → your callbacks) is queued via Excel-DNA's
-`QueueAsMacro` and executes only when Excel's main thread can run a macro:
-
-| Excel state | Delivery |
-|---|---|
-| Idle at the grid (normal use) | automatic, immediate |
-| Your VBA still running | deferred until `DoEvents` (this is what `WaitAll` pumps) |
-| VBE **break mode** (breakpoint, or you clicked *Debug* on an error) | **blocked entirely** until you resume/reset |
-| Cell edit mode / modal dialog | blocked until you leave it |
-
-So in production (button fires `CMS_GetCurvesAsync`, the sub returns, the
-user keeps working) callbacks fire by themselves as responses land. In a
-*debugging session* nothing arrives while you sit at a breakpoint — and the
-Immediate window doesn't pump between statements, so after launching from
-there call `CMS_Pump 2000` to flush deliveries.
-
-**Watchdog.** While any batch is in flight, modCms keeps a 1-second
-`Application.OnTime` tick armed (`CmsWatchdogTick`); entering the tick gives
-Excel a macro context and its `DoEvents` flushes any delivery that got stuck
-waiting for one. This is what makes fire-and-forget SET-only flows complete
-hands-off even when nothing else ever pumps. It disarms itself when the last
-batch finishes; `bridge_stop` cancels it on workbook close. (Break mode still
-blocks everything — OnTime can't fire there either.)
-
-**State resets wipe everything.** Pressing *End* on an error dialog, the
-VBE Stop/Reset button, or editing code in break mode clears every
-module-level variable: the curve store, the active-batch registry, **and
-modBridge's request router** — in-flight responses arriving after a reset
-are silently dropped. If you reset mid-test, relaunch the batch.
-
-### Debugging recipe (Immediate window)
-
-```vb
-?modCms.CMS_Diag                       ' transport, endpoint, store size, live batches,
-                                       ' and the XLL's last Application.Run failure
-Set b = CMS_GetCurvesAsync([D9:H450], "LIVE", , "MyMod.OnCurve", "MyMod.OnAllDone")
-CMS_Pump 5000                          ' pump until done (or timeout)
-?CMS_LastBatch.IsDone, CMS_LastBatch.FailedCount, CMS_Store().Count
-?StoreGet("AEP.USD.SENIOR_NORE_14.SNAC100").Quote("5Y")   ' Quote returns a VALUE - no Set
-```
-
-Launched batches are held in a registry until complete (and `CMS_LastBatch`
-keeps the most recent one), so they stay alive and inspectable even after
-your local `batch` variable goes out of scope.
-
-Callback name gotchas: the callback subs must be `Public` in a **standard
-module** (not a sheet/ThisWorkbook module) with the exact signatures
-`(curve As cCmsCurve, batch As cCmsBatch)` / `(batch As cCmsBatch)`.
-If `Application.Run` can't resolve or invoke them, the failure is printed
-to the Immediate window by `cCmsBatch`.
-
-Yes — the sync wrappers write to the store too: they run the same async
-parse path under a `WaitAll` pump, so a successful `CMS_GetCurveQuoteData`
-leaves the curve in `CMS_Store()` (until the next state reset clears it).
-
-## Failure semantics
-
-- Transport errors (timeout, non-2xx, SOAP fault, REST FAILURE) fail every
-  curve on that request with the reason; other requests are unaffected.
-- Curve-level CMS errors arrive as batch `errorMessageContent` keyed by
+- **Transport errors** (timeout, non-2xx, SOAP fault, REST FAILURE) fail
+  every curve on that request with the reason; other requests in the batch
+  are unaffected.
+- **Curve-level CMS errors** arrive as batch `errorMessageContent` keyed by
   fourTuple inside the text (legacy contract) and are mapped per curve.
-- A curve with `Status = "OK"` but no points and no recovery is marked FAILED
-  ("no data") — same rule the legacy bulk path applied.
-- Callbacks never break the batch: exceptions are swallowed and logged to the
-  Immediate window. Set `modBridge.gHttpVerbose = True` for request tracing.
+- A GET curve with overall `OK` but no points and no recovery → FAILED
+  ("no data") — the legacy bulk rule.
+- A SET whose response status isn't `OK` → FAILED regardless of echoed
+  points.
+- Failed SETs leave the store untouched; failed GETs leave the previous
+  good entry in place (the store only updates on success — status/error are
+  visible on the batch's curve and via subscriptions).
 
-## Things intentionally dropped from the legacy add-in
+---
 
-User authorization gating (`GetCMSUsersByQuery`), impersonation UI, menus,
-registry/session plumbing, Outlook mail, ad-hoc tenor arrays, 11/12/13-tenor
-standards, `SetFlat`/recovery-only/term-quote single-cell UDF variants, and
-the EXTENDED two-row mode. GETs are always 17-standard, SETs always the
-12-standard, per this workbook's usage.
+## 21. Diagnostics & debugging
+
+```vb
+?modCms.CMS_Diag
+'  transport=SOAP; endpoint=http://...
+'  bridge loaded=True; last dispatch error=
+'  store curves=412; pending 5Y=3; deliveries=841; watchdog flushes=0
+'  cell subscriptions=57; autofetch queued=0
+'  active batches=1
+'    [1] GET: 380/412 curves done, 32 request(s) pending, 0 failed
+'  last batch: SET done=True curves=3 failed=0 wall=420ms slowest request=391ms
+```
+
+- `watchdog flushes > 0` → deliveries genuinely sat stuck until the watchdog
+  freed them (environment-dependent; harmless but worth knowing).
+- `wall ≈ slowest request` → delivery immediate; `wall ≫ slowest request` →
+  responses waited for a macro context.
+- `modBridge.gHttpVerbose = True` → per-request tracing.
+- From the Immediate window: `CMS_Pump 5000` pumps until active batches
+  finish (nothing pumps between Immediate statements otherwise);
+  `CMS_LastBatch` inspects the most recent launch.
+
+---
+
+## 22. Gotchas
+
+- **Ticker lists must be vertical** (1 column) for the generic entry points
+  — a 1×N row is indistinguishable from a malformed tuple row. Use
+  `CMS_GetTickersAsync` for arbitrary shapes.
+- The legacy `CMS_SetCurveQuoteData` signature keeps `Ccy/DebtClass/Product`
+  required (VBA forbids required-after-optional) — use
+  `CMS_SetTickerQuoteData` for ticker-only sync SETs.
+- VBA analytics return `Empty` for missing quotes; only the sheet UDFs
+  auto-fetch.
+- Registered-but-unfetched curves: staging a pending level is allowed, but
+  the mark will fail that curve ("no 5Y mark") — GET before staging.
+- UDF names (`CURVE`, …) are global to the workbook; rename in
+  `modCmsUdf.bas` if they collide with anything.
+- Everything module-level (store, registry, subscriptions, staged levels)
+  is session state — a VBE reset wipes it.
+
+---
+
+## 23. Migration from the legacy add-in
+
+| Legacy | Now |
+|---|---|
+| `CMS_GetCurveQuoteData(t,c,d,p,tag,date,conv)` | same call (17-grid rows; also ticker-only) |
+| `CMS_GetBulkCurveQuoteData(range5,tag,date)` | same call (parallel under the hood; also ticker columns) |
+| `CMS_SetCurveQuoteData(t,c,d,p,quotes,…)` | same call (also `CMS_SetTickerQuoteData`) |
+| *(didn't exist)* | `CMS_SetBulkCurveQuoteData` / `CMS_SetCurvesAsync` |
+| `CMS_CompileFourTuple` / `CMS_CompileDebtClass…` | same names in `modCms` |
+| MSSOAP `SoapClient30`, `MSXML2` references | gone — late-bound, reference-free |
+| `xmlBats.create_cds_xml` + winhttpjs.bat | `BuildRosettaSet` + ExcelBridge (internal) |
+| 11/12/13-tenor standards, ad-hoc tenor arrays, EXTENDED 2-row mode, SetFlat, recovery-only setters, authorization/impersonation UI, menus, registry/session plumbing | dropped intentionally — GETs are always 17-standard, SETs always the 12-standard, per this workbook's usage |

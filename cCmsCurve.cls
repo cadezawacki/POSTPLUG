@@ -61,6 +61,7 @@ Public ErrorMsg As String
 Public RequestId As String
 Public HttpStatus As Long
 Public ElapsedMs As Long
+Public FetchedAt As Date     ' last successful server round trip (0 = never)
 
 Private Sub Class_Initialize()
     ReDim emptyQ(0 To 16) As Variant
@@ -155,6 +156,7 @@ Public Function Field(ByVal FieldName As String) As Variant
         Case "QUOTECONVENTION", "CONVENTION": Field = QuoteConvention
         Case "KEY", "FOURTUPLE", "LABEL":     Field = Key()
         Case "ELAPSEDMS":                     Field = ElapsedMs
+        Case "FETCHEDAT":                     Field = FetchedAt
         Case Else:                            Field = CVErr(2029) ' #NAME?
     End Select
 End Function

@@ -1153,6 +1153,136 @@ Public Function CMS_MarkPendingAsync(Optional ByVal OnCurve As String = "", _
 End Function
 
 ' =============================================================================
+'  WHOLE-STORE CONVENIENCE WRAPPERS
+'  Refresh / fetch everything the workbook knows about in one call. All of
+'  these return Nothing when there is nothing applicable to do.
+' =============================================================================
+
+' Every fourTuple key in the store (registered and/or fetched), 0-based.
+Public Function CMS_RegisteredKeys() As Variant
+    CMS_RegisteredKeys = CMS_Store().Keys
+End Function
+
+' Every registered ticker, 0-based.
+Public Function CMS_RegisteredTickers() As Variant
+    If gTickerIndex Is Nothing Then
+        CMS_RegisteredTickers = Array()
+    Else
+        CMS_RegisteredTickers = gTickerIndex.Keys
+    End If
+End Function
+
+Public Function CMS_RegisteredCount() As Long
+    CMS_RegisteredCount = CMS_Store().Count
+End Function
+
+' Force-refresh EVERY curve in the store (registered identities included) -
+' one parallel async GET across the lot.
+Public Function CMS_RefreshAllAsync(Optional ByVal Tag As String = CMS_TAG_LIVE, _
+                                    Optional ByVal QuoteDate As Date, _
+                                    Optional ByVal OnCurve As String = "", _
+                                    Optional ByVal OnAllDone As String = "", _
+                                    Optional ByVal CurvesPerRequest As Long = 1, _
+                                    Optional ByVal TimeoutMs As Long = DEFAULT_TIMEOUT_MS) As cCmsBatch
+    Set CMS_RefreshAllAsync = LaunchGetForKeys(CMS_Store().Keys, Tag, QuoteDate, _
+                                               OnCurve, OnAllDone, CurvesPerRequest, TimeoutMs)
+End Function
+
+' Alias for discoverability: "get all" = refresh all registered curves.
+Public Function CMS_GetAllAsync(Optional ByVal Tag As String = CMS_TAG_LIVE, _
+                                Optional ByVal QuoteDate As Date, _
+                                Optional ByVal OnCurve As String = "", _
+                                Optional ByVal OnAllDone As String = "", _
+                                Optional ByVal CurvesPerRequest As Long = 1, _
+                                Optional ByVal TimeoutMs As Long = DEFAULT_TIMEOUT_MS) As cCmsBatch
+    Set CMS_GetAllAsync = CMS_RefreshAllAsync(Tag, QuoteDate, OnCurve, OnAllDone, _
+                                              CurvesPerRequest, TimeoutMs)
+End Function
+
+' Re-GET only the curves whose last attempt FAILED. Also clears their
+' auto-fetch cooldown stamps so CURVE() cells resume updating.
+Public Function CMS_RefreshFailedAsync(Optional ByVal Tag As String = CMS_TAG_LIVE, _
+                                       Optional ByVal QuoteDate As Date, _
+                                       Optional ByVal OnCurve As String = "", _
+                                       Optional ByVal OnAllDone As String = "", _
+                                       Optional ByVal CurvesPerRequest As Long = 1, _
+                                       Optional ByVal TimeoutMs As Long = DEFAULT_TIMEOUT_MS) As cCmsBatch
+    Dim k As Variant
+    Dim picked As Collection
+    Set picked = New Collection
+    For Each k In CMS_Store().Keys
+        If gStore(k).Status = CMS_STATUS_FAILED Then
+            picked.Add CStr(k)
+            If Not gFetchStamp Is Nothing Then
+                If gFetchStamp.Exists(CStr(k)) Then gFetchStamp.Remove CStr(k)
+            End If
+        End If
+    Next k
+    Set CMS_RefreshFailedAsync = LaunchGetForCollection(picked, Tag, QuoteDate, _
+                                                        OnCurve, OnAllDone, CurvesPerRequest, TimeoutMs)
+End Function
+
+' Re-GET curves never fetched, or fetched more than OlderThanMinutes ago.
+Public Function CMS_RefreshStaleAsync(Optional ByVal OlderThanMinutes As Long = 15, _
+                                      Optional ByVal Tag As String = CMS_TAG_LIVE, _
+                                      Optional ByVal QuoteDate As Date, _
+                                      Optional ByVal OnCurve As String = "", _
+                                      Optional ByVal OnAllDone As String = "", _
+                                      Optional ByVal CurvesPerRequest As Long = 1, _
+                                      Optional ByVal TimeoutMs As Long = DEFAULT_TIMEOUT_MS) As cCmsBatch
+    Dim k As Variant
+    Dim picked As Collection
+    Set picked = New Collection
+    For Each k In CMS_Store().Keys
+        If gStore(k).FetchedAt = 0 Then
+            picked.Add CStr(k)
+        ElseIf DateDiff("n", gStore(k).FetchedAt, Now()) >= OlderThanMinutes Then
+            picked.Add CStr(k)
+        End If
+    Next k
+    Set CMS_RefreshStaleAsync = LaunchGetForCollection(picked, Tag, QuoteDate, _
+                                                       OnCurve, OnAllDone, CurvesPerRequest, TimeoutMs)
+End Function
+
+' Dump the whole store (key + 17 tenors + scalars + pending) below a cell.
+Public Sub CMS_WriteStoreToRange(ByVal TopLeft As Range, _
+                                 Optional ByVal IncludeHeader As Boolean = True)
+    Dim arr As Variant
+    arr = CMS_StoreToArray(, IncludeHeader)
+    TopLeft.Resize(UBound(arr, 1) + 1, UBound(arr, 2) + 1).Value2 = arr
+End Sub
+
+Private Function LaunchGetForKeys(ByVal Keys As Variant, ByVal Tag As String, _
+                                  ByVal QuoteDate As Date, ByVal OnCurve As String, _
+                                  ByVal OnAllDone As String, ByVal CurvesPerRequest As Long, _
+                                  ByVal TimeoutMs As Long) As cCmsBatch
+    Dim arr() As Variant
+    Dim i As Long
+    If UBound(Keys) < LBound(Keys) Then Exit Function   ' empty store -> Nothing
+    ReDim arr(0 To UBound(Keys) - LBound(Keys), 0 To 0)
+    For i = 0 To UBound(Keys) - LBound(Keys)
+        arr(i, 0) = Keys(LBound(Keys) + i)
+    Next i
+    Set LaunchGetForKeys = CMS_GetCurvesAsync(arr, Tag, QuoteDate, OnCurve, OnAllDone, _
+                                              CurvesPerRequest, TimeoutMs)
+End Function
+
+Private Function LaunchGetForCollection(ByVal Picked As Collection, ByVal Tag As String, _
+                                        ByVal QuoteDate As Date, ByVal OnCurve As String, _
+                                        ByVal OnAllDone As String, ByVal CurvesPerRequest As Long, _
+                                        ByVal TimeoutMs As Long) As cCmsBatch
+    Dim arr() As Variant
+    Dim i As Long
+    If Picked.Count = 0 Then Exit Function              ' nothing applicable -> Nothing
+    ReDim arr(0 To Picked.Count - 1, 0 To 0)
+    For i = 1 To Picked.Count
+        arr(i - 1, 0) = Picked(i)
+    Next i
+    Set LaunchGetForCollection = CMS_GetCurvesAsync(arr, Tag, QuoteDate, OnCurve, OnAllDone, _
+                                                    CurvesPerRequest, TimeoutMs)
+End Function
+
+' =============================================================================
 '  CELL SUBSCRIPTIONS - reactive recalc of sheet references
 '
 '  Cells (or any ranges) subscribe to a curve; whenever that curve's store
