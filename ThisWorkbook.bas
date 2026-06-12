@@ -91,6 +91,9 @@ Private Sub Workbook_SheetChange(ByVal Sh As Object, ByVal Target As Range)
     Application.enableEvents = True
     Application.screenUpdating = True
 
+    ' Curve grid edits: stage / revert / restyle (multi-row + multi-area aware)
+    modCmsSheet.CMS_HandleCurveGridChange Sh, Target
+
     If NamedRangeExistsIn("cms_col", Sh) Then
 
         Call RegisterObserverZones(Sh)
