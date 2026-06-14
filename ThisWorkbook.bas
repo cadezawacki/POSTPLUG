@@ -43,6 +43,7 @@ Public Sub bridge_stop()
     modBridge.StopBridge
     modBridge.StopHeartbeat
     modBridge.DetachBridge   ' stop XLL callbacks into this workbook
+    modCms.CMS_StopWatchdog  ' cancel pending OnTime so close stays closed
     IntersectionObserver.UnregisterAll
 End Sub
 
@@ -90,6 +91,9 @@ Private Sub Workbook_SheetChange(ByVal Sh As Object, ByVal Target As Range)
     Application.enableEvents = True
     Application.screenUpdating = True
 
+    ' Curve grid edits: stage / revert / restyle (multi-row + multi-area aware)
+    modCmsSheet.CMS_HandleCurveGridChange Sh, Target
+
     If NamedRangeExistsIn("cms_col", Sh) Then
 
         Call RegisterObserverZones(Sh)
@@ -106,6 +110,13 @@ End Sub
 
 Private Sub Workbook_SheetSelectionChange(ByVal Sh As Object, ByVal Target As Range)
     IntersectionObserver.CheckIntersection Target
+End Sub
+
+' CURVE() sheet UDFs can't launch HTTP from calc context - they queue the
+' keys instead, and this drains the queue the moment calculation finishes.
+Private Sub Workbook_SheetCalculate(ByVal Sh As Object)
+    On Error Resume Next
+    modCms.CMS_FlushAutoFetch
 End Sub
 
 ' Register observer zones at startup so selection-driven callbacks (and the
