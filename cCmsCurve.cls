@@ -37,10 +37,11 @@ Public Quotes As Variant     ' selected per QuoteConvention
 Public Spreads As Variant    ' raw creditSpread points
 Public Upfronts As Variant   ' raw creditUpfront points
 
-' --- Previous business-day close (NYOISCLOSE), cached once per day ---
-Public PrevQuotes As Variant ' 17-grid as of PrevDate
-Public PrevDate As Date      ' the T-1 BUSINESS day the quotes are for (0 = never fetched)
-Public PrevFetchedAt As Date ' when the close was pulled
+' --- Historical closes (NYOISCLOSE), date-keyed, cached once per day ---
+' One 17-grid per business date so T-1, T-2, ... T-N coexist. The legacy
+' Prev* members (below) remain as T-1 conveniences over this dictionary.
+Private mHist As Object      ' "yyyymmdd" -> 17-grid Variant array
+Private mHistAt As Object    ' "yyyymmdd" -> Date the close was pulled
 
 ' Full 17-point curve queued for a SET (computed client-side); merged with the
 ' server echo into Quotes/store once the SET succeeds.
@@ -73,10 +74,17 @@ Private Sub Class_Initialize()
     Quotes = emptyQ
     Spreads = emptyQ
     Upfronts = emptyQ
-    PrevQuotes = emptyQ
+    Set mHist = CreateObject("Scripting.Dictionary")
+    mHist.CompareMode = vbTextCompare
+    Set mHistAt = CreateObject("Scripting.Dictionary")
+    mHistAt.CompareMode = vbTextCompare
     Status = ""
     ErrorMsg = ""
 End Sub
+
+Private Function DK(ByVal AsOf As Date) As String
+    DK = Format$(AsOf, "yyyymmdd")
+End Function
 
 Public Sub Init(ByVal pTicker As String, ByVal pCcy As String, ByVal pDebtClass As String, _
                 ByVal pProduct As String, Optional ByVal pQuoteConvention As String = "SPREADS")
@@ -113,12 +121,97 @@ Public Function Quote(ByVal Tenor As String) As Variant
     If idx >= 0 Then Quote = Quotes(idx)
 End Function
 
-' Previous business-day close quote by tenor. Empty if not cached.
-Public Function PrevQuote(ByVal Tenor As String) As Variant
-    Dim idx As Long
-    idx = modCms.CMS_TenorIndex(Tenor)
-    If idx >= 0 Then PrevQuote = PrevQuotes(idx)
+' --- Date-keyed historical close access ---
+
+' Store a 17-grid close for a business date (called by modCms.StoreHistClose).
+Public Sub HistSet(ByVal AsOf As Date, ByVal Quotes17 As Variant)
+    mHist(DK(AsOf)) = Quotes17
+    mHistAt(DK(AsOf)) = Now()
+End Sub
+
+Public Function HasHist(ByVal AsOf As Date) As Boolean
+    HasHist = mHist.Exists(DK(AsOf))
 End Function
+
+' The 17-grid as of AsOf, or an empty 17-grid when not cached.
+Public Function HistQuotesFor(ByVal AsOf As Date) As Variant
+    If mHist.Exists(DK(AsOf)) Then
+        HistQuotesFor = mHist(DK(AsOf))
+    Else
+        ReDim e(0 To 16) As Variant
+        HistQuotesFor = e
+    End If
+End Function
+
+' One tenor of the AsOf close. Empty if the date or tenor isn't cached.
+Public Function HistQuote(ByVal Tenor As String, ByVal AsOf As Date) As Variant
+    Dim idx As Long
+    If Not mHist.Exists(DK(AsOf)) Then Exit Function
+    idx = modCms.CMS_TenorIndex(Tenor)
+    If idx >= 0 Then HistQuote = mHist(DK(AsOf))(idx)
+End Function
+
+Public Function HistFetchedAtFor(ByVal AsOf As Date) As Variant
+    If mHistAt.Exists(DK(AsOf)) Then HistFetchedAtFor = mHistAt(DK(AsOf))
+End Function
+
+' Cached business dates (as Date), newest first - for carryover and diag.
+Public Function HistDates() As Variant
+    Dim k As Variant, out() As Variant, n As Long, i As Long, j As Long, tmp As Date
+    If mHist.Count = 0 Then
+        HistDates = Array()
+        Exit Function
+    End If
+    ReDim out(0 To mHist.Count - 1)
+    For Each k In mHist.Keys
+        out(n) = DateSerial(CLng(Left$(CStr(k), 4)), CLng(Mid$(CStr(k), 5, 2)), CLng(Mid$(CStr(k), 7, 2)))
+        n = n + 1
+    Next k
+    For i = 0 To UBound(out) - 1            ' newest first (small N)
+        For j = i + 1 To UBound(out)
+            If out(j) > out(i) Then tmp = out(i): out(i) = out(j): out(j) = tmp
+        Next j
+    Next i
+    HistDates = out
+End Function
+
+' Copy every cached close from another curve (StoreUpsert carryover across a
+' refresh GET, which delivers a brand-new object).
+Public Sub CopyHistoryFrom(ByVal Other As cCmsCurve)
+    Dim d As Variant
+    Dim dates As Variant
+    dates = Other.HistDates()
+    For Each d In dates
+        mHist(DK(CDate(d))) = Other.HistQuotesFor(CDate(d))
+        mHistAt(DK(CDate(d))) = Other.HistFetchedAtFor(CDate(d))
+    Next d
+End Sub
+
+Public Function HistCount() As Long
+    HistCount = mHist.Count
+End Function
+
+' --- T-1 conveniences over the history dictionary (back-compat) ---
+
+' Previous business-day (T-1) close quote by tenor. Empty if not cached.
+Public Function PrevQuote(ByVal Tenor As String) As Variant
+    PrevQuote = HistQuote(Tenor, modCms.CMS_PrevBizDay())
+End Function
+
+Public Property Get PrevQuotes() As Variant
+    PrevQuotes = HistQuotesFor(modCms.CMS_PrevBizDay())
+End Property
+
+' T-1 business date if its close is cached, else 0 (legacy semantics).
+Public Property Get PrevDate() As Date
+    Dim d As Date
+    d = modCms.CMS_PrevBizDay()
+    If HasHist(d) Then PrevDate = d
+End Property
+
+Public Property Get PrevFetchedAt() As Variant
+    PrevFetchedAt = HistFetchedAtFor(modCms.CMS_PrevBizDay())
+End Property
 
 Public Function FiveYear() As Variant
     FiveYear = Quotes(modCms.CMS_IDX_5Y)
@@ -144,12 +237,17 @@ Public Function HasQuotes() As Boolean
 End Function
 
 ' Generic field access (sheet UDFs / dynamic readers): any tenor name plus
-' every scalar and identity field. "Prev" + tenor reads the cached T-1 close
-' (e.g. "Prev5Y"); PrevDate / PrevFetchedAt expose the close metadata.
+' every scalar and identity field.
+'   Historical closes: "Prev<tenor>" = T-1 (e.g. "Prev5Y"); "Prev<n>_<tenor>"
+'   = T-n (e.g. "Prev2_5Y" = T-2 5Y). "PrevDate"/"PrevFetchedAt" (and the
+'   offset forms "Prev2_Date" etc.) expose that close's metadata.
 ' Unknown names return #NAME?.
 Public Function Field(ByVal FieldName As String) As Variant
     Dim idx As Long
-    Dim fn As String
+    Dim fn As String, rest As String, lead As String
+    Dim off As Long
+    Dim usp As Long
+    Dim d As Date
 
     idx = modCms.CMS_TenorIndex(FieldName)
     If idx >= 0 Then
@@ -159,19 +257,33 @@ Public Function Field(ByVal FieldName As String) As Variant
 
     fn = UCase$(Replace(Trim$(FieldName), " ", ""))
 
-    ' T-1 close fields: PREV5Y, PREV10Y, ... PREVDATE, PREVFETCHEDAT
+    ' Historical-close fields: PREV<tenor> (T-1) or PREV<n>_<tenor> (T-n),
+    ' plus PREV[<n>_]DATE / FETCHEDAT.
     If Left$(fn, 4) = "PREV" Then
-        idx = modCms.CMS_TenorIndex(Mid$(fn, 5))
+        rest = Mid$(fn, 5)
+        off = 1
+        usp = InStr(rest, "_")
+        If usp > 0 Then
+            lead = Left$(rest, usp - 1)
+            If Len(lead) = 0 Then
+                rest = Mid$(rest, usp + 1)            ' "PREV_5Y" -> T-1
+            ElseIf IsAllDigits(lead) Then
+                off = CLng(lead)                      ' "PREV2_5Y" -> T-2
+                rest = Mid$(rest, usp + 1)
+            End If
+        End If
+        d = modCms.CMS_BizDay(-off)
+        idx = modCms.CMS_TenorIndex(rest)
         If idx >= 0 Then
-            Field = PrevQuotes(idx)
+            Field = HistQuotesFor(d)(idx)
             Exit Function
         End If
-        Select Case fn
-            Case "PREVDATE":
-                If PrevDate = 0 Then Field = Empty Else Field = PrevDate
+        Select Case rest
+            Case "DATE":
+                If HasHist(d) Then Field = d Else Field = Empty
                 Exit Function
-            Case "PREVFETCHEDAT":
-                If PrevFetchedAt = 0 Then Field = Empty Else Field = PrevFetchedAt
+            Case "FETCHEDAT":
+                Field = HistFetchedAtFor(d)
                 Exit Function
         End Select
     End If
@@ -221,4 +333,16 @@ Public Function ToRow() As Variant
     row(23) = Status
     row(24) = ErrorMsg
     ToRow = row
+End Function
+
+Private Function IsAllDigits(ByVal s As String) As Boolean
+    Dim i As Long
+    If Len(s) = 0 Then Exit Function
+    For i = 1 To Len(s)
+        Select Case Asc(Mid$(s, i, 1))
+            Case 48 To 57
+            Case Else: Exit Function
+        End Select
+    Next i
+    IsAllDigits = True
 End Function

@@ -15,10 +15,13 @@ Option Explicit
 '      =TICKERDIFF("AEP","XYZ","5Y")  ' AEP - XYZ at 5Y
 '      =TICKERRATIO("AEP","XYZ")      ' AEP / XYZ at 5Y
 '
-'  T-1 close fields (cached once per business day via NYOISCLOSE):
-'      =CURVE("AEP", "Prev5Y")        ' previous business-day close, any tenor
-'      =CURVE("AEP", "PrevDate")      ' which date the close is for
-'      =CURVEDIFF("AEP","Prev5Y","5Y")' day change at 5Y
+'  Historical close fields (date-keyed, NYOISCLOSE; T-1 auto on fresh GET,
+'  deeper offsets fetched on demand when the cell evaluates):
+'      =CURVE("AEP", "Prev5Y")        ' T-1 close, any tenor
+'      =CURVE("AEP", "Prev2_5Y")      ' T-2 close ("Prev<n>_<tenor>")
+'      =CURVE("AEP", "PrevDate")      ' which date the T-1 close is for
+'      =CURVEDIFF("AEP","Prev5Y","5Y")  ' 1-day change at 5Y
+'      =CURVEDIFF("AEP","Prev2_5Y","5Y")' 2-day change at 5Y
 '
 '  Reactivity: each call subscribes its own cell (Application.Caller) to the
 '  curve(s) it reads. How a store change reaches the cell is governed by
@@ -52,15 +55,18 @@ Public Function CURVE(ByVal TickerOrKey As String, _
     Set cv = modCms.StoreGet(Key)
     If cv Is Nothing Then GoTo NA           ' raw key never stored
 
+    Dim off As Long
     v = cv.Field(Field)
     If IsError(v) Then
         CURVE = v                           ' #NAME? for unknown fields
     ElseIf IsEmpty(v) Then
-        If UCase$(Left$(Trim$(Field), 4)) = "PREV" Then
-            ' T-1 close not cached yet: queue it (toggle-respecting) and show
-            ' pending until it lands; #N/A once cached but unmarked.
-            If cv.PrevDate = 0 Then
-                If AutoFetch Then modCms.QueuePrevCloseFetch Key
+        off = modCms.CMS_HistFieldOffset(Field)
+        If off >= 1 Then
+            ' Historical close (T-off) not cached yet: queue that offset
+            ' on demand (toggle-respecting) and show pending until it lands;
+            ' #N/A once the close is cached but unmarked at this tenor.
+            If Not modCms.CMS_HistCached(Key, off) Then
+                If AutoFetch Then modCms.QueueHistFetchOffset Key, off
                 CURVE = modCms.CMS_PENDING_TEXT
             Else
                 CURVE = CVErr(xlErrNA)

@@ -43,9 +43,9 @@ Private mFailedCount As Long
 Private mLaunchTick As Double       ' Timer at FinishLaunch
 Private mWallMs As Long             ' launch -> last delivery (wall clock)
 
-' T-1 close mode: results go into the stored curves' PrevQuotes (as of
-' PrevAsOf) instead of replacing their live quotes. Set by modCms after
-' launch (safe: deliveries can't run mid-VBA).
+' Historical-close mode: results go into the stored curves' date-keyed
+' history under PrevAsOf instead of replacing their live quotes. Set by
+' modCms after launch (safe: deliveries can't run mid-VBA).
 Public PrevCloseMode As Boolean
 Public PrevAsOf As Date
 
@@ -268,12 +268,13 @@ Public Sub OnHttpDone(RequestId As String, r As cHttpResponse)
                 If mAction = "SET" Then
                     modCms.StoreAfterSet cv
                 ElseIf PrevCloseMode Then
-                    modCms.StorePrevClose cv, PrevAsOf
+                    modCms.StoreHistClose cv, PrevAsOf
                 Else
                     modCms.StoreUpsert cv
-                    ' First live GET of the day triggers the once-a-day T-1
-                    ' close fetch for this curve (when enabled).
-                    modCms.QueuePrevCloseFetch cv.Key
+                    ' First live GET of the day triggers the once-a-day
+                    ' historical-close fetch(es) for this curve (when enabled;
+                    ' T-1 .. T-CMS_HistDepth, default T-1 only).
+                    modCms.QueueHistFetch cv.Key
                 End If
             End If
             ' Recalc any sheet cells subscribed to this curve (status updates

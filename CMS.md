@@ -373,9 +373,10 @@ Conventions: tenor pairs read *second minus/over first*; ticker pairs read
 =TICKERRATIO("AEP","XYZ")
 ```
 
-T-1 close fields (see [below](#t-1-business-day-close)): `Prev5Y`,
-`Prev10Y`, …, `PrevDate`, `PrevFetchedAt` — so `=CURVEDIFF("AEP","Prev5Y","5Y")`
-is the day change at 5Y.
+Historical-close fields (see [below](#12b-historical-business-day-closes)):
+`Prev5Y` (T-1), `Prev2_5Y` (T-2), … and `PrevDate` / `Prev2_Date` /
+`PrevFetchedAt` — so `=CURVEDIFF("AEP","Prev5Y","5Y")` is the day change at
+5Y, and `=CURVEDIFF("AEP","Prev2_5Y","5Y")` is the 2-day change.
 
 - **Self-subscribing**: each call registers its own cell against the
   curve(s) it reads. Not volatile — only affected cells are touched.
@@ -420,29 +421,40 @@ exists. Stale references (deleted sheets/cells) self-prune.
 
 ---
 
-## 12b. T-1 business-day close
+## 12b. Historical business-day closes
 
-After each curve's **first live GET of the day**, its previous *business*
-day close (`NYOISCLOSE`, weekend-aware via `WorkDay`; holidays too if a
-`CmsHolidays` named range of dates exists) is fetched once, async, and
-cached on the same store entry — historical closes don't change intraday.
-**Default ON**; `CMS_SetAutoPrevClose False` to disable.
+Each curve caches **one 17-grid per business date** (`NYOISCLOSE`,
+weekend-aware via `WorkDay`; holidays too if a `CmsHolidays` named range of
+dates exists), so T-1, T-2, … T-N coexist on the same store entry without
+overwriting each other. Closes don't change intraday, so each (curve, date)
+is fetched at most once per day.
+
+- **Fresh live GET** auto-fetches T-1 through **T-`CMS_HistDepth`**
+  (default **1 = T-1 only**). `CMS_SetHistDepth 2` to also pull T-2 on every
+  fresh GET; `CMS_SetAutoPrevClose False` to disable auto-fetch entirely.
+- **Deeper history is fetched on demand**, independent of the depth: a
+  `=CURVE(t,"Prev2_5Y")` cell queues T-2 when it evaluates, or fetch
+  explicitly with `CMS_GetHistCloseAsync(spec, 2)`.
 
 ```vb
 ?CMS_PrevQuote("AEP", "5Y")            ' cached T-1 close
-?CMS_DayChange("AEP", "5Y")            ' live - T-1 close
-?CMS_PrevBizDay()                      ' the date being cached
-?CMS_GetStored("AEP").PrevQuote("10Y"), CMS_GetStored("AEP").PrevDate
+?CMS_HistQuote("AEP", "5Y", 2)         ' cached T-2 close (Empty if not cached)
+?CMS_DayChange("AEP", "5Y")            ' live - T-1
+?CMS_HistChange("AEP", "5Y", 2)        ' live - T-2
+?CMS_BizDay(-2)                        ' the T-2 business date
+?CMS_GetStored("AEP").HistQuote("10Y", CMS_BizDay(-2))
 
-' Manual / toggle-off path - fetch T-1 for a spec or the whole store:
-Set b = CMS_GetPrevCloseAsync()                ' everything
-Set b = CMS_GetPrevCloseAsync([A4:A30])        ' subset
+' Explicit fetch (whole store or a spec) at an offset:
+Set b = CMS_GetHistCloseAsync(, 2)             ' T-2 for everything
+Set b = CMS_GetHistCloseAsync([A4:A30], 2)     ' T-2 for a subset
+Set b = CMS_GetPrevCloseAsync()                ' T-1 alias, everything
 ```
 
-The live quotes and the close live on the same `cCmsCurve` (`Quotes` vs
-`PrevQuotes`/`PrevDate`/`PrevFetchedAt`), and both survive refresh GETs
-(refreshes carry over the cached close and any staged pending level).
-In cells: `=CURVE("AEP","Prev5Y")` etc.
+Live quotes and every cached close live on the same `cCmsCurve` (`Quotes`
+vs the date-keyed history; `HistQuotesFor(date)`, `HistDates()`), and all of
+it survives refresh GETs (refreshes carry over the cached closes and any
+staged pending level). In cells: `=CURVE("AEP","Prev5Y")` (T-1),
+`=CURVE("AEP","Prev2_5Y")` (T-2), `=CURVE("AEP","Prev2_Date")`.
 
 ## 13. Whole-store refresh wrappers
 

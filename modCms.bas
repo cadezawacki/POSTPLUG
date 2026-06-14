@@ -87,9 +87,10 @@ Private gWatchdogFlushCount As Long ' deliveries that were STUCK until a watchdo
 Private gSubs As Object             ' bucket (KEY or TICKER) -> Dictionary(cell address -> True)
 Private gWanted As Object           ' fourTuple keys queued for auto-fetch
 Private gFetchStamp As Object       ' key -> time of last auto-fetch launch (cooldown)
-Private gPrevWanted As Object       ' keys queued for a T-1 close fetch
-Private gPrevStamp As Object        ' key -> time of last T-1 fetch launch (cooldown)
+Private gHistWanted As Object       ' "yyyymmdd" -> Dictionary(key -> True) queued closes
+Private gHistStamp As Object        ' "yyyymmdd|key" -> last fetch launch (cooldown)
 Private gAutoPrevClose As Variant   ' Empty = default (True)
+Private gHistDepth As Long          ' fresh-GET auto-fetch depth (0 = default 1 = T-1 only)
 
 Private gNotifyMode As Long         ' see CMS_NOTIFY_* (default DIRTY)
 Private gNotifyModeSet As Boolean
@@ -160,6 +161,18 @@ Public Function CMS_AutoPrevCloseEnabled() As Boolean
     Else
         CMS_AutoPrevCloseEnabled = CBool(gAutoPrevClose)
     End If
+End Function
+
+' How many business-day closes a fresh live GET auto-fetches (T-1 .. T-depth).
+' Default 1 (T-1 only). Deeper history is always available on demand via
+' CMS_GetHistCloseAsync / CURVE(t,"Prev2_5Y") regardless of this setting.
+Public Sub CMS_SetHistDepth(ByVal Depth As Long)
+    If Depth < 1 Then Depth = 1
+    gHistDepth = Depth
+End Sub
+
+Public Function CMS_HistDepth() As Long
+    If gHistDepth < 1 Then CMS_HistDepth = 1 Else CMS_HistDepth = gHistDepth
 End Function
 
 Public Function CMS_EndpointUrl() As String
@@ -322,7 +335,15 @@ End Sub
 
 Private Function WantedCount() As Long
     If Not gWanted Is Nothing Then WantedCount = gWanted.Count
-    If Not gPrevWanted Is Nothing Then WantedCount = WantedCount + gPrevWanted.Count
+    WantedCount = WantedCount + HistWantedCount()
+End Function
+
+Private Function HistWantedCount() As Long
+    Dim b As Variant
+    If gHistWanted Is Nothing Then Exit Function
+    For Each b In gHistWanted.Keys
+        HistWantedCount = HistWantedCount + gHistWanted(b).Count
+    Next b
 End Function
 
 ' Called by cCmsBatch.OnHttpDone on every delivered completion.
@@ -415,7 +436,7 @@ Public Function CMS_Diag() As String
         "; watchdog flushes=" & gWatchdogFlushCount & vbNewLine
     s = s & "cell subscriptions=" & CMS_SubscriptionCount() & _
         "; autofetch queued=" & IIf(gWanted Is Nothing, 0, gWanted.Count) & _
-        "; T-1 queued=" & IIf(gPrevWanted Is Nothing, 0, gPrevWanted.Count) & vbNewLine
+        "; hist queued=" & HistWantedCount() & " (depth " & CMS_HistDepth() & ")" & vbNewLine
     s = s & "notify mode=" & CMS_GetNotifyMode() & " (0=off 1=dirty 2=calc)" & _
         "; auto prev close=" & CMS_AutoPrevCloseEnabled() & _
         "; prev biz day=" & Format$(CMS_PrevBizDay(), "yyyy-mm-dd") & vbNewLine
@@ -943,11 +964,8 @@ Public Sub StoreUpsert(ByVal Curve As cCmsCurve)
     If CMS_Store().Exists(Curve.Key) Then
         Set old = gStore(Curve.Key)
         If Not old Is Curve Then
-            If old.PrevDate <> 0 And Curve.PrevDate = 0 Then
-                Curve.PrevQuotes = old.PrevQuotes
-                Curve.PrevDate = old.PrevDate
-                Curve.PrevFetchedAt = old.PrevFetchedAt
-            End If
+            ' Carry the cached closes and any staged amend onto the new object.
+            If old.HistCount > 0 And Curve.HistCount = 0 Then Curve.CopyHistoryFrom old
             If Not IsEmpty(old.Pending5y) And IsEmpty(Curve.Pending5y) Then
                 Curve.Pending5y = old.Pending5y
             End If
@@ -1701,102 +1719,165 @@ Public Sub CMS_FlushAutoFetch()
         End If
     End If
 
-    ' --- T-1 business-day close (NYOISCLOSE) ---
-    If Not gPrevWanted Is Nothing Then
-        If gPrevWanted.Count > 0 Then
-            ks = gPrevWanted.Keys
-            gPrevWanted.RemoveAll
-            ReDim arr(0 To UBound(ks), 0 To 0)
-            For i = 0 To UBound(ks)
-                arr(i, 0) = ks(i)
-                gPrevStamp(ks(i)) = Now()
-            Next i
-            pd = CMS_PrevBizDay()
-            On Error Resume Next
-            Set pb = CMS_GetCurvesAsync(arr, CMS_TAG_NYOISCLOSE, pd)
-            If Err.Number <> 0 Then
-                Debug.Print "CMS T-1 fetch failed to launch: " & Err.Description
-            ElseIf Not pb Is Nothing Then
-                pb.PrevCloseMode = True
-                pb.PrevAsOf = pd
-            End If
-            On Error GoTo 0
+    ' --- historical closes (NYOISCLOSE), one batch per business date ---
+    If Not gHistWanted Is Nothing Then
+        If gHistWanted.Count > 0 Then
+            Dim dateKeys As Variant
+            Dim ds As Variant
+            Dim bucket As Object
+            dateKeys = gHistWanted.Keys            ' snapshot: we remove while iterating
+            For Each ds In dateKeys
+                Set bucket = gHistWanted(ds)
+                gHistWanted.Remove ds
+                ks = bucket.Keys
+                ReDim arr(0 To UBound(ks), 0 To 0)
+                For i = 0 To UBound(ks)
+                    arr(i, 0) = ks(i)
+                    gHistStamp(CStr(ds) & "|" & CStr(ks(i))) = Now()
+                Next i
+                pd = DateSerial(CLng(Left$(CStr(ds), 4)), CLng(Mid$(CStr(ds), 5, 2)), CLng(Mid$(CStr(ds), 7, 2)))
+                On Error Resume Next
+                Set pb = CMS_GetCurvesAsync(arr, CMS_TAG_NYOISCLOSE, pd)
+                If Err.Number <> 0 Then
+                    Debug.Print "CMS hist fetch (" & CStr(ds) & ") failed to launch: " & Err.Description
+                ElseIf Not pb Is Nothing Then
+                    pb.PrevCloseMode = True
+                    pb.PrevAsOf = pd
+                End If
+                On Error GoTo 0
+            Next ds
         End If
     End If
 End Sub
 
 ' =============================================================================
-'  T-1 BUSINESS-DAY CLOSE (NYOISCLOSE)
-'  After a curve's first live GET of the day, its previous-business-day close
-'  is fetched once (async) and cached on the same store entry - historical
-'  closes don't change intraday, so once per day is enough. Default ON;
-'  toggle with CMS_SetAutoPrevClose False (then use CMS_GetPrevCloseAsync
-'  manually). Access via curve.PrevQuote("5Y"), CMS_PrevQuote, CMS_DayChange,
-'  or =CURVE("AEP","Prev5Y") / "PrevDate" / "PrevFetchedAt" in cells.
+'  HISTORICAL BUSINESS-DAY CLOSES (NYOISCLOSE), date-keyed
+'  Each curve caches one 17-grid per business date, so T-1, T-2, ... T-N
+'  coexist without overwriting each other. Closes don't change intraday, so
+'  each (curve, date) is fetched at most once per day.
+'    - Fresh live GET auto-fetches T-1 .. T-CMS_HistDepth (default 1 = T-1).
+'    - Deeper history is fetched ON DEMAND: a CURVE(t,"Prev2_5Y") cell, or an
+'      explicit CMS_GetHistCloseAsync(spec, 2). CMS_SetHistDepth raises the
+'      auto depth if you want T-2 (etc.) pulled on every fresh GET.
+'  Toggle the whole behavior with CMS_SetAutoPrevClose False. Access:
+'    curve.PrevQuote("5Y") / curve.HistQuote("5Y", date)
+'    CMS_PrevQuote / CMS_HistQuote(t,"5Y",2) / CMS_DayChange / CMS_HistChange
+'    =CURVE("AEP","Prev5Y") (T-1) / "Prev2_5Y" (T-2) / "Prev2_Date" in cells
 ' =============================================================================
 
-' Previous BUSINESS day (weekends skipped; holidays too if a 'CmsHolidays'
-' named range of dates exists in the workbook).
-Public Function CMS_PrevBizDay(Optional ByVal FromDate As Date) As Date
+' Business day at a signed Offset from FromDate (default today). Weekends
+' skipped; holidays too if a 'CmsHolidays' named range of dates exists.
+'   CMS_BizDay(-1) = T-1, CMS_BizDay(-2) = T-2, ...
+Public Function CMS_BizDay(ByVal Offset As Long, Optional ByVal FromDate As Date) As Date
     Dim hol As Variant
     If FromDate = 0 Then FromDate = Date
     On Error Resume Next
     hol = ThisWorkbook.Names("CmsHolidays").RefersToRange.Value2
     On Error GoTo 0
     If IsEmpty(hol) Then
-        CMS_PrevBizDay = CDate(Application.WorksheetFunction.WorkDay(FromDate, -1))
+        CMS_BizDay = CDate(Application.WorksheetFunction.WorkDay(FromDate, Offset))
     Else
-        CMS_PrevBizDay = CDate(Application.WorksheetFunction.WorkDay(FromDate, -1, hol))
+        CMS_BizDay = CDate(Application.WorksheetFunction.WorkDay(FromDate, Offset, hol))
     End If
 End Function
 
-' Queue a curve for a T-1 close fetch if it doesn't already have today's
-' (i.e. the current T-1 date's) close cached. Cooldown-guarded; respects the
-' CMS_SetAutoPrevClose toggle.
-Public Sub QueuePrevCloseFetch(ByVal Key As String)
-    Dim stored As cCmsCurve
+' Previous BUSINESS day (T-1) - thin alias kept for back-compat.
+Public Function CMS_PrevBizDay(Optional ByVal FromDate As Date) As Date
+    CMS_PrevBizDay = CMS_BizDay(-1, FromDate)
+End Function
 
+' After a curve's first live GET: queue its T-1 .. T-(CMS_HistDepth) closes
+' that aren't already cached. Respects the CMS_SetAutoPrevClose toggle.
+Public Sub QueueHistFetch(ByVal Key As String)
+    Dim off As Long
     If Not CMS_AutoPrevCloseEnabled() Then Exit Sub
+    For off = 1 To CMS_HistDepth()
+        QueueHistFetchOffset Key, off
+    Next off
+End Sub
+
+' Queue a single business-day offset (T-off) for a curve unless already
+' cached. Cooldown-guarded per (date, key). On-demand path for deeper history
+' (CURVE(t,"Prev2_5Y")) independent of the fresh-GET depth.
+Public Sub QueueHistFetchOffset(ByVal Key As String, ByVal Offset As Long)
+    Dim stored As cCmsCurve
+    Dim d As Date
+    Dim ds As String
+    Dim stampKey As String
+
+    If Offset < 1 Then Exit Sub
     Set stored = StoreGet(Key)
     If stored Is Nothing Then Exit Sub
-    If stored.PrevDate = CMS_PrevBizDay() Then Exit Sub   ' already current
+    d = CMS_BizDay(-Offset)
+    If stored.HasHist(d) Then Exit Sub          ' already cached
 
-    If gPrevWanted Is Nothing Then
-        Set gPrevWanted = CreateObject("Scripting.Dictionary")
-        gPrevWanted.CompareMode = vbTextCompare
-        Set gPrevStamp = CreateObject("Scripting.Dictionary")
-        gPrevStamp.CompareMode = vbTextCompare
+    ds = Format$(d, "yyyymmdd")
+    stampKey = ds & "|" & Key
+    If gHistStamp Is Nothing Then
+        Set gHistWanted = CreateObject("Scripting.Dictionary")
+        gHistWanted.CompareMode = vbTextCompare
+        Set gHistStamp = CreateObject("Scripting.Dictionary")
+        gHistStamp.CompareMode = vbTextCompare
     End If
-    If gPrevStamp.Exists(Key) Then
-        If DateDiff("s", gPrevStamp(Key), Now()) < PREVFETCH_COOLDOWN_SEC Then Exit Sub
+    If gHistStamp.Exists(stampKey) Then
+        If DateDiff("s", gHistStamp(stampKey), Now()) < PREVFETCH_COOLDOWN_SEC Then Exit Sub
     End If
-    gPrevWanted(Key) = True
+    If Not gHistWanted.Exists(ds) Then
+        Dim bucket As Object
+        Set bucket = CreateObject("Scripting.Dictionary")
+        bucket.CompareMode = vbTextCompare
+        gHistWanted.Add ds, bucket
+    End If
+    gHistWanted(ds)(Key) = True
     EnsureWatchdog
 End Sub
 
-' Route a prev-close GET result into the stored curve's PrevQuotes (the live
-' quotes are untouched). Called by cCmsBatch for PrevCloseMode batches.
-Public Sub StorePrevClose(ByVal Curve As cCmsCurve, ByVal AsOf As Date)
+' Route a historical-close GET result into the stored curve's date-keyed
+' history (live quotes untouched). Called by cCmsBatch for PrevCloseMode.
+Public Sub StoreHistClose(ByVal Curve As cCmsCurve, ByVal AsOf As Date)
     Dim stored As cCmsCurve
     Set stored = StoreGet(Curve.Key)
     If stored Is Nothing Then Exit Sub
-    stored.PrevQuotes = Curve.Quotes
-    stored.PrevDate = AsOf
-    stored.PrevFetchedAt = Now()
+    stored.HistSet AsOf, Curve.Quotes
     NotifySubscribers stored
 End Sub
 
-' Explicit T-1 close fetch: any curve spec (tuples / tickers / single
-' ticker), or everything in the store when omitted. Returns Nothing when
-' there is nothing to fetch.
-Public Function CMS_GetPrevCloseAsync(Optional ByVal CurveSpec As Variant, _
+' Is the T-Offset close cached for this curve? (UDF #Pending vs #N/A choice.)
+Public Function CMS_HistCached(ByVal Key As String, ByVal Offset As Long) As Boolean
+    Dim stored As cCmsCurve
+    Set stored = StoreGet(Key)
+    If stored Is Nothing Then Exit Function
+    CMS_HistCached = stored.HasHist(CMS_BizDay(-Abs(Offset)))
+End Function
+
+' Business-day offset encoded in a field name, or 0 for non-historical
+' fields. "Prev5Y" -> 1, "Prev2_5Y" -> 2, "5Y"/"Recovery" -> 0.
+Public Function CMS_HistFieldOffset(ByVal FieldName As String) As Long
+    Dim fn As String, rest As String, lead As String
+    Dim usp As Long
+    fn = UCase$(Replace(Trim$(FieldName), " ", ""))
+    If Left$(fn, 4) <> "PREV" Then Exit Function
+    CMS_HistFieldOffset = 1
+    rest = Mid$(fn, 5)
+    usp = InStr(rest, "_")
+    If usp > 1 Then
+        lead = Left$(rest, usp - 1)
+        If lead Like String(Len(lead), "#") Then CMS_HistFieldOffset = CLng(lead)
+    End If
+End Function
+
+' Explicit historical-close fetch at business offset T-Offset: any curve spec
+' (tuples / tickers / single ticker), or everything in the store when
+' omitted. Returns Nothing when there is nothing to fetch.
+Public Function CMS_GetHistCloseAsync(Optional ByVal CurveSpec As Variant, _
+                                      Optional ByVal Offset As Long = 1, _
                                       Optional ByVal OnCurve As String = "", _
                                       Optional ByVal OnAllDone As String = "", _
                                       Optional ByVal CurvesPerRequest As Long = 1, _
                                       Optional ByVal TimeoutMs As Long = DEFAULT_TIMEOUT_MS) As cCmsBatch
     Dim b As cCmsBatch
     Dim pd As Date
-    pd = CMS_PrevBizDay()
+    pd = CMS_BizDay(-Abs(Offset))
     If IsMissing(CurveSpec) Or IsEmpty(CurveSpec) Then
         Set b = LaunchGetForKeys(CMS_Store().Keys, CMS_TAG_NYOISCLOSE, pd, _
                                  OnCurve, OnAllDone, CurvesPerRequest, TimeoutMs)
@@ -1808,7 +1889,17 @@ Public Function CMS_GetPrevCloseAsync(Optional ByVal CurveSpec As Variant, _
         b.PrevCloseMode = True
         b.PrevAsOf = pd
     End If
-    Set CMS_GetPrevCloseAsync = b
+    Set CMS_GetHistCloseAsync = b
+End Function
+
+' T-1 close fetch - thin alias for back-compat.
+Public Function CMS_GetPrevCloseAsync(Optional ByVal CurveSpec As Variant, _
+                                      Optional ByVal OnCurve As String = "", _
+                                      Optional ByVal OnAllDone As String = "", _
+                                      Optional ByVal CurvesPerRequest As Long = 1, _
+                                      Optional ByVal TimeoutMs As Long = DEFAULT_TIMEOUT_MS) As cCmsBatch
+    Set CMS_GetPrevCloseAsync = CMS_GetHistCloseAsync(CurveSpec, 1, OnCurve, OnAllDone, _
+                                                      CurvesPerRequest, TimeoutMs)
 End Function
 
 ' Cached T-1 close quote (Empty if not cached yet).
@@ -1817,15 +1908,29 @@ Public Function CMS_PrevQuote(ByVal TickerOrKey As String, _
     CMS_PrevQuote = RequireStored(TickerOrKey).PrevQuote(Tenor)
 End Function
 
+' Cached T-Offset close quote (Empty if that date isn't cached).
+Public Function CMS_HistQuote(ByVal TickerOrKey As String, _
+                              Optional ByVal Tenor As String = "5Y", _
+                              Optional ByVal Offset As Long = 1) As Variant
+    CMS_HistQuote = RequireStored(TickerOrKey).HistQuote(Tenor, CMS_BizDay(-Abs(Offset)))
+End Function
+
 ' Day change: live quote minus T-1 close at a tenor (Empty if either missing).
 Public Function CMS_DayChange(ByVal TickerOrKey As String, _
                               Optional ByVal Tenor As String = "5Y") As Variant
+    CMS_DayChange = CMS_HistChange(TickerOrKey, Tenor, 1)
+End Function
+
+' Change vs the T-Offset close: live - hist[Offset] at a tenor.
+Public Function CMS_HistChange(ByVal TickerOrKey As String, _
+                               Optional ByVal Tenor As String = "5Y", _
+                               Optional ByVal Offset As Long = 1) As Variant
     Dim cv As cCmsCurve
     Dim a As Variant, b As Variant
     Set cv = RequireStored(TickerOrKey)
-    a = cv.Quote(Tenor): b = cv.PrevQuote(Tenor)
+    a = cv.Quote(Tenor): b = cv.HistQuote(Tenor, CMS_BizDay(-Abs(Offset)))
     If IsEmpty(a) Or IsEmpty(b) Then Exit Function
-    CMS_DayChange = CDbl(a) - CDbl(b)
+    CMS_HistChange = CDbl(a) - CDbl(b)
 End Function
 
 ' =============================================================================
